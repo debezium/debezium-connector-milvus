@@ -21,6 +21,7 @@ import io.debezium.config.EnumeratedValue;
 import io.debezium.config.Field;
 import io.debezium.config.Field.Group;
 import io.debezium.connector.SourceInfoStructMaker;
+import io.debezium.heartbeat.DatabaseHeartbeatImpl;
 import io.debezium.jdbc.JdbcValueConverters.DecimalMode;
 import io.debezium.relational.ColumnFilterMode;
 import io.debezium.relational.RelationalDatabaseConnectorConfig;
@@ -278,6 +279,32 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
                     + "Defaults to 'by-dev-rootcoord-dml_0'.");
 
     /**
+     * Override the parent's {@code heartbeat.action.query} field (inherited via
+     * {@link RelationalDatabaseConnectorConfig}) to reject it outright.
+     *
+     * <p>The generic heartbeat action-query feature ({@code DatabaseHeartbeatImpl})
+     * requires a {@code JdbcConnection} to run the query against. Milvus is not a
+     * JDBC/relational data source and this connector wires no
+     * {@code HeartbeatConnectionProvider}, so silently accepting this property would
+     * fail with a {@code NullPointerException} at task startup instead of a clear
+     * config error. Interval-based heartbeats ({@code heartbeat.interval.ms},
+     * {@code heartbeat.topics.prefix}) remain fully supported.</p>
+     */
+    public static final Field HEARTBEAT_ACTION_QUERY = DatabaseHeartbeatImpl.HEARTBEAT_ACTION_QUERY
+            .withValidation(MilvusConnectorConfig::validateHeartbeatActionQueryUnsupported);
+
+    private static int validateHeartbeatActionQueryUnsupported(Configuration config, Field field, Field.ValidationOutput problems) {
+        String value = config.getString(field);
+        if (!Strings.isNullOrBlank(value)) {
+            problems.accept(field, value, "heartbeat.action.query is not supported by the Milvus connector: "
+                    + "Milvus is not a relational/JDBC data source, so there is no connection available "
+                    + "to execute an action query against. Remove this property.");
+            return 1;
+        }
+        return 0;
+    }
+
+    /**
      * Override the parent's {@code decimal.handling.mode} field to change the default
      * from {@code precise} to {@code double}.
      *
@@ -532,6 +559,8 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
                     TIMETICK_STALL_TIMEOUT_MS,
                     BUFFER_MAX_EVENTS,
                     BUFFER_MAX_BYTES)
+            .group(Group.ADVANCED_HEARTBEAT,
+                    HEARTBEAT_ACTION_QUERY)
             // Milvus is not a JDBC datasource; remove the inherited relational fields
             // that are marked required() so that BaseSourceTask field validation
             // does not fail with "A value is required".

@@ -121,6 +121,8 @@ public class MilvusStreamingChangeEventSource
                     }
                 }
 
+                dispatcher.dispatchHeartbeatEvent(partition, offsetContext);
+
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
                     dispatchAndUpdateWatermark(flushed, partition, offsetContext);

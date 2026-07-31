@@ -8,7 +8,10 @@ package io.debezium.connector.milvus;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.kafka.common.config.ConfigDef;
@@ -95,5 +98,51 @@ public class MilvusConnectorConfigTest {
             assertThat(configDef).isNotNull();
             assertThat(configDef.names()).contains("milvus.uri", "topic.prefix", "milvus.database", "milvus.etcd.checkpoint.path");
         });
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2328")
+    void shouldExposeStandardHeartbeatFields() {
+        ConfigDef configDef = MilvusConnectorConfig.configDef();
+
+        assertThat(configDef.names()).contains("heartbeat.interval.ms", "heartbeat.topics.prefix");
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2328")
+    void shouldApplyHeartbeatIntervalWhenConfigured() {
+        Map<String, String> props = new HashMap<>(baseConfig());
+        props.put("heartbeat.interval.ms", "5000");
+
+        Configuration config = Configuration.from(props);
+        MilvusConnectorConfig connectorConfig = new MilvusConnectorConfig(config);
+
+        assertThat(connectorConfig.getHeartbeatInterval()).isEqualTo(Duration.ofMillis(5000));
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2328")
+    void shouldRejectHeartbeatActionQuery() {
+        Map<String, String> props = new HashMap<>(baseConfig());
+        props.put("heartbeat.action.query", "SELECT 1");
+        Configuration config = Configuration.from(props);
+
+        List<String> problems = new ArrayList<>();
+        boolean valid = config.validateAndRecord(MilvusConnectorConfig.ALL_FIELDS, problems::add);
+
+        assertThat(valid).isFalse();
+        assertThat(problems).anyMatch(p -> p.contains("heartbeat.action.query"));
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2328")
+    void shouldValidateSuccessfullyWithoutHeartbeatActionQuery() {
+        Configuration config = Configuration.from(baseConfig());
+
+        List<String> problems = new ArrayList<>();
+        boolean valid = config.validateAndRecord(MilvusConnectorConfig.ALL_FIELDS, problems::add);
+
+        assertThat(valid).isTrue();
+        assertThat(problems).isEmpty();
     }
 }

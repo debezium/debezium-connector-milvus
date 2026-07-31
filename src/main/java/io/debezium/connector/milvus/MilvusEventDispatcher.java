@@ -7,6 +7,7 @@ package io.debezium.connector.milvus;
 
 import io.debezium.connector.base.ChangeEventQueue;
 import io.debezium.connector.common.DebeziumHeaderProducer;
+import io.debezium.heartbeat.Heartbeat.ScheduledHeartbeat;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.source.spi.EventMetadataProvider;
@@ -25,10 +26,11 @@ public class MilvusEventDispatcher extends EventDispatcher<MilvusPartition, Tabl
                                  DataCollectionFilters.DataCollectionFilter<TableId> filter,
                                  ChangeEventCreator changeEventCreator,
                                  EventMetadataProvider metadataProvider,
+                                 ScheduledHeartbeat heartbeat,
                                  SchemaNameAdjuster schemaNameAdjuster,
                                  DebeziumHeaderProducer headerProducer) {
         super(connectorConfig, topicNamingStrategy, schema, queue, filter,
-                changeEventCreator, metadataProvider, schemaNameAdjuster,
+                changeEventCreator, metadataProvider, heartbeat, schemaNameAdjuster,
                 headerProducer);
     }
 }

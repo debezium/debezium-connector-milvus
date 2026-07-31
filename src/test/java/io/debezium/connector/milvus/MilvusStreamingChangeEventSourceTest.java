@@ -350,6 +350,33 @@ public class MilvusStreamingChangeEventSourceTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2328")
+    void shouldDispatchHeartbeatEventOnEachLoopIteration() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
+        when(context.isRunning()).thenReturn(true, true, true, false);
+        when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
+
+        source.execute(context, partition, offsetContext);
+
+        verify(dispatcher, times(3)).dispatchHeartbeatEvent(partition, offsetContext);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2328")
+    void shouldDispatchHeartbeatEventEvenWhenMessagesArePolled() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
+        RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
+
+        when(context.isRunning()).thenReturn(true, false);
+        when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of(msg));
+        when(deserializer.deserialize(any(RawMilvusMessage.class))).thenReturn(List.of());
+
+        source.execute(context, partition, offsetContext);
+
+        verify(dispatcher, times(1)).dispatchHeartbeatEvent(partition, offsetContext);
+    }
+
+    @Test
     @FixFor("debezium/dbz#2230")
     void shouldFailHardOnPersistentEtcdErrorRatherThanSkipToLatest() throws Exception {
         when(checkpointReader.read(anyString())).thenThrow(new RuntimeException("etcd unavailable"));

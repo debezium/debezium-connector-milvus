@@ -26,6 +26,8 @@ import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.connector.milvus.checkpoint.JetcdEtcdCheckpointReader;
 import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
 import io.debezium.connector.milvus.metadata.MilvusServiceMetadataClient;
+import io.debezium.heartbeat.Heartbeat.ScheduledHeartbeat;
+import io.debezium.heartbeat.HeartbeatFactory;
 import io.debezium.pipeline.ChangeEventSourceCoordinator;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
@@ -112,6 +114,12 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
         MilvusEventMetadataProvider metadataProvider = new MilvusEventMetadataProvider();
 
+        // Milvus has no JDBC connection, so no HeartbeatConnectionProvider/HeartbeatErrorHandler
+        // is supplied here; heartbeat.action.query is rejected outright by MilvusConnectorConfig
+        // validation, so the action-query path in HeartbeatFactory is never exercised.
+        ScheduledHeartbeat heartbeat = new HeartbeatFactory<TableId>()
+                .getScheduledHeartbeat(connectorConfig, null, null, queue);
+
         DebeziumHeaderProducer headerProducer = new DebeziumHeaderProducer(taskContext);
         MilvusEventDispatcher dispatcher = new MilvusEventDispatcher(
                 connectorConfig,
@@ -121,6 +129,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
                 connectorConfig.getTableFilters().dataCollectionFilter(),
                 DataChangeEvent::new,
                 metadataProvider,
+                heartbeat,
                 connectorConfig.schemaNameAdjuster(),
                 headerProducer);
 
