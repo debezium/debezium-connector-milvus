@@ -289,6 +289,10 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
      * fail with a {@code NullPointerException} at task startup instead of a clear
      * config error. Interval-based heartbeats ({@code heartbeat.interval.ms},
      * {@code heartbeat.topics.prefix}) remain fully supported.</p>
+     *
+     * <p>TODO: Remove this guard once the underlying NPE in
+     * {@code DatabaseHeartbeatImpl} is resolved in Debezium core.
+     * See <a href="https://github.com/debezium/dbz/issues/2339">DBZ-2339</a>.</p>
      */
     public static final Field HEARTBEAT_ACTION_QUERY = DatabaseHeartbeatImpl.HEARTBEAT_ACTION_QUERY
             .withValidation(MilvusConnectorConfig::validateHeartbeatActionQueryUnsupported);

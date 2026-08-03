@@ -121,8 +121,6 @@ public class MilvusStreamingChangeEventSource
                     }
                 }
 
-                dispatcher.dispatchHeartbeatEvent(partition, offsetContext);
-
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
                     dispatchAndUpdateWatermark(flushed, partition, offsetContext);
@@ -145,6 +143,8 @@ public class MilvusStreamingChangeEventSource
                 bufferFull = false;
 
                 offsetContext.setVchannelTimeticks(orderingEngine.getVchannelTimeticks());
+
+                dispatcher.dispatchHeartbeatEvent(partition, offsetContext);
             }
             catch (MilvusBufferFullException e) {
                 LOGGER.warn("Buffer full: {}. Pausing poll, waiting for watermark to advance.", e.getMessage());
