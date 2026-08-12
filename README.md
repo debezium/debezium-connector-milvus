@@ -17,8 +17,6 @@ This repository contains the incubating connector for [Milvus](https://milvus.io
 You are encouraged to explore this connector and test it, but it is not recommended yet for production usage.
 E.g. the format of emitted messages may change, specific features may not be implemented yet etc.
 
-Documentation on how to use the connector and on its internal workings can be found [here](https://debezium.io/documentation/reference/stable/connectors/milvus.html).
-
 ## Supported features
 
 - Captures row-level inserts and deletes from Milvus collections and emits them as Debezium change events.
@@ -70,7 +68,6 @@ While streaming, the connector deserializes each raw MQ message and buffers it i
 ```
 
 The connector supports a single task; `tasks.max` values greater than `1` are ignored.
-For the full list of connector properties, see the reference documentation.
 
 ## Limitations
 
@@ -156,7 +153,7 @@ If you only want to run the unit tests, or you are running against a Milvus clus
 
 ## Contributing
 
-The Debezium community welcomes anyone that wants to help out in any way, whether that includes reporting problems, helping with documentation, or contributing code changes to fix bugs, add tests, or implement new features. See [this document](https://github.com/debezium/debezium/blob/main/CONTRIBUTE.md) for details.
+The Debezium community welcomes anyone that wants to help out in any way, whether that includes reporting problems, helping with documentation, or contributing code changes to fix bugs, add tests, or implement new features. See [this document](https://github.com/debezium/debezium/blob/main/CONTRIBUTING.md) for details.
 
 ### Building just the artifacts, without running tests, CheckStyle, etc.
 
