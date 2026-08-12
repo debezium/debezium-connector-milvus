@@ -31,11 +31,13 @@ import io.debezium.heartbeat.HeartbeatFactory;
 import io.debezium.pipeline.ChangeEventSourceCoordinator;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
+import io.debezium.pipeline.monitor.OffsetActivityMonitorServiceProvider;
 import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.spi.Offsets;
 import io.debezium.pipeline.spi.Partition;
 import io.debezium.relational.TableId;
 import io.debezium.schema.SchemaFactory;
+import io.debezium.service.spi.ServiceRegistry;
 import io.debezium.snapshot.SnapshotterService;
 import io.debezium.spi.topic.TopicNamingStrategy;
 import io.debezium.util.LoggingContext;
@@ -97,6 +99,8 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
         Offsets<MilvusPartition, MilvusOffsetContext> previousOffsets = getPreviousOffsets(partitionProvider,
                 offsetLoader);
+
+        registerServiceProviders(connectorConfig.getServiceRegistry());
 
         this.queue = new ChangeEventQueue.Builder<DataChangeEvent>()
                 .pollInterval(Duration.ofMillis(connectorConfig.getPollIntervalMs()))
@@ -213,5 +217,11 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     @Override
     protected Optional<ErrorHandler> getErrorHandler() {
         return Optional.ofNullable(errorHandler);
+    }
+
+    @Override
+    protected void registerServiceProviders(ServiceRegistry serviceRegistry) {
+        // todo: remove and use super method once Milvus supports all service providers
+        serviceRegistry.registerServiceProvider(new OffsetActivityMonitorServiceProvider());
     }
 }

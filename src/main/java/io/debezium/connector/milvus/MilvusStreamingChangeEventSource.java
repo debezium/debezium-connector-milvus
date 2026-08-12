@@ -22,6 +22,8 @@ import io.debezium.connector.milvus.checkpoint.ChannelCheckpoint;
 import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.data.Envelope;
 import io.debezium.pipeline.EventDispatcher;
+import io.debezium.pipeline.monitor.OffsetActivityMonitor;
+import io.debezium.pipeline.monitor.OffsetActivityMonitorService;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
 import io.debezium.pipeline.source.spi.StreamingChangeEventSource;
 import io.debezium.relational.TableId;
@@ -63,6 +65,8 @@ public class MilvusStreamingChangeEventSource
     private final Duration pollTimeout;
     private final EtcdCheckpointReader checkpointReader;
     private final MilvusStreamingChangeEventSourceMetrics streamingMetrics;
+    private final OffsetActivityMonitorService offsetActivityMonitorService;
+    private OffsetActivityMonitor<MilvusPartition, MilvusOffsetContext> offsetActivityMonitor;
 
     public MilvusStreamingChangeEventSource(MilvusConnectorConfig connectorConfig,
                                             MilvusMessageConsumer messageConsumer,
@@ -81,6 +85,7 @@ public class MilvusStreamingChangeEventSource
         this.pollTimeout = Duration.ofMillis(connectorConfig.getPollIntervalMs());
         this.checkpointReader = checkpointReader;
         this.streamingMetrics = streamingMetrics;
+        this.offsetActivityMonitorService = OffsetActivityMonitorService.lookup(connectorConfig.getServiceRegistry());
     }
 
     @Override
@@ -114,6 +119,8 @@ public class MilvusStreamingChangeEventSource
             }
 
             try {
+                offsetActivityMonitorService.pulse(partition, offsetContext);
+
                 if (!bufferFull) {
                     List<RawMilvusMessage> messages = messageConsumer.poll(pollTimeout);
                     if (!messages.isEmpty()) {
@@ -195,6 +202,14 @@ public class MilvusStreamingChangeEventSource
         if (messageConsumer != null) {
             messageConsumer.close();
         }
+    }
+
+    @Override
+    public Optional<OffsetActivityMonitor<MilvusPartition, MilvusOffsetContext>> getOffsetActivityMonitor() {
+        if (offsetActivityMonitor == null) {
+            offsetActivityMonitor = new MilvusOffsetActivityMonitor(connectorConfig.getOffsetActivityMonitorInterval());
+        }
+        return Optional.of(offsetActivityMonitor);
     }
 
     /**
