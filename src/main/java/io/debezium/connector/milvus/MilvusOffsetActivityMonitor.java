@@ -9,17 +9,15 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import io.debezium.pipeline.monitor.OffsetActivityMonitor;
+import io.debezium.pipeline.monitor.StaleOffsetsResult;
 
 /**
  * An {@link OffsetActivityMonitor} that tracks state changes to the connector's offsets.
  * <p>
  * The full offset state, the MQ positions, per-vchannel timetick watermarks, and checkpoint
  * timestamp, is compared against the value captured when the monitor was last consulted, and
- * when none have moved, a warning is logged. Milvus publishes timetick messages on the
+ * when none have moved, a stale result is reported. Milvus publishes timetick messages on the
  * physical channel continuously even when no data is written, so a stationary offset means
  * the connector is no longer consuming anything from the message queue rather than that the
  * captured collections are quiet.
@@ -32,8 +30,6 @@ import io.debezium.pipeline.monitor.OffsetActivityMonitor;
  */
 public class MilvusOffsetActivityMonitor implements OffsetActivityMonitor<MilvusPartition, MilvusOffsetContext> {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(MilvusOffsetActivityMonitor.class);
-
     private final Duration checkInterval;
 
     private Map<String, ?> previousOffset;
@@ -43,20 +39,24 @@ public class MilvusOffsetActivityMonitor implements OffsetActivityMonitor<Milvus
     }
 
     @Override
-    public void checkForStaleOffsets(MilvusPartition partition, MilvusOffsetContext offsetContext) {
+    public StaleOffsetsResult checkForStaleOffsets(MilvusPartition partition, MilvusOffsetContext offsetContext) {
         final Map<String, ?> offset = offsetContext.getOffset();
         final Long mqOffset = offsetContext.getMqOffset(partition.getPchannel());
 
         // Check for stale state
+        StaleOffsetsResult result = StaleOffsetsResult.fresh();
         if (mqOffset != null && Objects.equals(previousOffset, offset)) {
-            LOGGER.warn("Offsets at MQ position {} for pchannel '{}' have not changed in {} milliseconds. " +
-                    "Milvus publishes timetick messages on the physical channel continuously even when idle, " +
-                    "so this may indicate the connector is no longer receiving messages from the message queue.",
-                    mqOffset, partition.getPchannel(), checkInterval.toMillis());
+            result = StaleOffsetsResult.stale(
+                    ("Offsets at MQ position %d for pchannel '%s' have not changed in %d milliseconds. " +
+                            "Milvus publishes timetick messages on the physical channel continuously even when idle, " +
+                            "so this may indicate the connector is no longer receiving messages from the message queue.")
+                            .formatted(mqOffset, partition.getPchannel(), checkInterval.toMillis()));
         }
 
         // Update tracked stats
         previousOffset = offset;
+
+        return result;
     }
 
 }
