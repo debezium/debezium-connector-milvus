@@ -211,8 +211,13 @@ public class MilvusStreamingChangeEventSource
 
             for (MilvusChangeEvent event : events) {
                 if (event instanceof MilvusChangeEvent.TimeTick timeTick) {
-                    String vchannel = Strings.defaultIfEmpty(timeTick.getVchannel(), pchannel);
-                    orderingEngine.updateWatermark(vchannel, timeTick.getTso());
+                    String vchannel = timeTick.getVchannel();
+                    if (Strings.isNullOrBlank(vchannel) || vchannel.equals(pchannel)) {
+                        orderingEngine.updateChannelWatermark(timeTick.getTso());
+                    }
+                    else {
+                        orderingEngine.updateWatermark(vchannel, timeTick.getTso());
+                    }
                 }
                 else {
                     orderingEngine.buffer(event);
