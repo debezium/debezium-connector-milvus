@@ -165,7 +165,7 @@ public class MilvusProtoDeserializer {
 
     private List<MilvusChangeEvent> toInsertEvents(InsertRequest ins, RawMilvusMessage message)
             throws MilvusWireFormatMismatchException {
-        long tso = baseTimestamp(ins.getBase());
+        long tso = effectiveTso(baseTimestamp(ins.getBase()), ins.getTimestampsList());
         String collection = ins.getCollectionName();
         String pchannel = safeTopic(message);
         String vchannel = Strings.defaultIfEmpty(ins.getShardName(), pchannel);
@@ -191,7 +191,7 @@ public class MilvusProtoDeserializer {
 
     private MilvusChangeEvent toDeleteEvent(DeleteRequest del, RawMilvusMessage message)
             throws MilvusWireFormatMismatchException {
-        long tso = baseTimestamp(del.getBase());
+        long tso = effectiveTso(baseTimestamp(del.getBase()), del.getTimestampsList());
         String pchannel = safeTopic(message);
         String vchannel = Strings.defaultIfEmpty(del.getShardName(), pchannel);
 
@@ -230,6 +230,20 @@ public class MilvusProtoDeserializer {
 
     private static long baseTimestamp(MsgBase base) {
         return base == null ? 0L : base.getTimestamp();
+    }
+
+    /**
+     * Milvus does not populate {@code MsgBase.timestamp} on the insert half of an
+     * upsert; the commit TSO is then only present in the per-row {@code timestamps}
+     * field. A zero TSO must never reach the ordering engine, which would drop the
+     * event as infinitely late. All rows in one DML message share the same TSO, so
+     * the first entry is authoritative.
+     */
+    private static long effectiveTso(long baseTso, List<Long> rowTimestamps) {
+        if (baseTso != 0L || rowTimestamps == null || rowTimestamps.isEmpty()) {
+            return baseTso;
+        }
+        return rowTimestamps.get(0);
     }
 
     /**
