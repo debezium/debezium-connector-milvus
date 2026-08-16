@@ -7,6 +7,7 @@ package io.debezium.connector.milvus;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -79,6 +80,7 @@ public class TimetickOrderingEngine {
     private long lastWatermarkAdvanceTimeMs;
     private long forceFlushCount;
     private long lateMessagesDropped;
+    private long channelTimetick;
 
     public TimetickOrderingEngine(MilvusConnectorConfig config) {
         this(config, Clock.system());
@@ -131,8 +133,8 @@ public class TimetickOrderingEngine {
         bufferedEventCount++;
         bufferedBytes += eventBytes;
         String vchannel = event.getVchannel();
-        if (vchannel != null) {
-            trackedVchannels.add(vchannel);
+        if (vchannel != null && trackedVchannels.add(vchannel) && channelTimetick > 0) {
+            latestTimetickByVchannel.putIfAbsent(vchannel, channelTimetick);
         }
     }
 
@@ -155,9 +157,36 @@ public class TimetickOrderingEngine {
             latestTimetickByVchannel.put(vchannel, tso);
         }
 
-        // Recompute global watermark. Note: this can decrease when new
-        // vchannels are added (a tracked vchannel without a timetick yet
-        // has an effective timetick of 0, dragging the min down).
+        advanceWatermark();
+    }
+
+    /**
+     * Process a channel-level TimeTick, i.e. one whose {@code TimeTickMsg}
+     * carries no shard name. Milvus emits these per pchannel as the minimum
+     * guarantee across every producer on the channel: no message with a lower
+     * TSO can still arrive on any vchannel multiplexed onto this pchannel.
+     * The tick therefore advances every tracked vchannel at once, and is
+     * remembered so vchannels discovered later start from it rather than from
+     * zero (which would drag the global watermark back to zero).
+     *
+     * @param tso the timetick TSO value
+     */
+    public void updateChannelWatermark(long tso) {
+        if (tso > channelTimetick) {
+            channelTimetick = tso;
+        }
+        for (String vchannel : trackedVchannels) {
+            latestTimetickByVchannel.merge(vchannel, tso, Math::max);
+        }
+        if (trackedVchannels.isEmpty() && tso > globalWatermark) {
+            globalWatermark = tso;
+            lastWatermarkAdvanceTimeMs = clock.currentTimeInMillis();
+            return;
+        }
+        advanceWatermark();
+    }
+
+    private void advanceWatermark() {
         long newWatermark = computeWatermark();
         if (newWatermark > globalWatermark) {
             globalWatermark = newWatermark;
@@ -176,10 +205,6 @@ public class TimetickOrderingEngine {
         if (latestTimetickByVchannel.isEmpty()) {
             return 0L;
         }
-
-        // All tracked vchannels must have reported a timetick for the watermark
-        // to be meaningful. If a tracked vchannel has no timetick yet, its
-        // effective timetick is 0, making the watermark 0.
         long min = Long.MAX_VALUE;
         for (String vc : trackedVchannels) {
             Long tt = latestTimetickByVchannel.get(vc);
@@ -206,7 +231,7 @@ public class TimetickOrderingEngine {
         var flushable = new TreeMap<>(pendingByTso.headMap(globalWatermark, true));
 
         for (Map.Entry<Long, List<MilvusChangeEvent>> entry : flushable.entrySet()) {
-            flushed.addAll(entry.getValue());
+            flushed.addAll(orderWithinTso(entry.getValue()));
             long entryBytes = entry.getValue().stream()
                     .mapToLong(this::estimateEventBytes)
                     .sum();
@@ -216,6 +241,22 @@ public class TimetickOrderingEngine {
         }
 
         return flushed;
+    }
+
+    /**
+     * Order events sharing one TSO so that deletes are emitted before inserts.
+     * A Milvus upsert expands to a delete and an insert stamped with the same
+     * TSO; downstream consumers must observe the delete first or the applied
+     * end state is a deleted row instead of the upserted one. The sort is
+     * stable, so arrival order is preserved within each operation type.
+     */
+    private static List<MilvusChangeEvent> orderWithinTso(List<MilvusChangeEvent> events) {
+        if (events.size() < 2) {
+            return events;
+        }
+        List<MilvusChangeEvent> ordered = new ArrayList<>(events);
+        ordered.sort(Comparator.comparingInt(e -> e instanceof MilvusChangeEvent.Delete ? 0 : 1));
+        return ordered;
     }
 
     /**
@@ -247,7 +288,7 @@ public class TimetickOrderingEngine {
 
         List<MilvusChangeEvent> flushed = new ArrayList<>();
         for (List<MilvusChangeEvent> events : pendingByTso.values()) {
-            flushed.addAll(events);
+            flushed.addAll(orderWithinTso(events));
         }
 
         pendingByTso.clear();
