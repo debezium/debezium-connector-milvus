@@ -15,6 +15,8 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import javax.management.InstanceNotFoundException;
+
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.awaitility.Awaitility;
@@ -34,6 +36,7 @@ import io.debezium.connector.milvus.util.MilvusTestContainer;
 import io.debezium.connector.milvus.util.TestHelper;
 import io.debezium.embedded.AbstractConnectorTest;
 import io.debezium.embedded.async.AbstractAsyncEngineConnectorTest;
+import io.debezium.embedded.util.MetricsHelper;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.DataType;
 import io.milvus.v2.service.collection.request.CreateCollectionReq;
@@ -156,6 +159,27 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
                 + "." + collectionName;
     }
 
+    /**
+     * Wait until the streaming source's Kafka consumer has resolved and
+     * assigned its starting position (e.g. seeked to LATEST).
+     *
+     * <p>Guards on the {@code PositionResolved} JMX attribute exposed by
+     * {@link MilvusStreamingChangeEventSourceMetrics} rather than a fixed
+     * sleep, so the test isn't brittle under slow CI environments: a DML
+     * issued before the consumer's position is resolved could be missed
+     * entirely (if seeking to LATEST lands after the write) rather than
+     * merely delayed.</p>
+     */
+    private void waitForConsumerPositionResolved() {
+        Awaitility.await("consumer position resolved")
+                .pollInterval(Duration.ofMillis(100))
+                .atMost(Duration.ofSeconds(30))
+                .ignoreException(InstanceNotFoundException.class)
+                .until(() -> Boolean.TRUE.equals(
+                        MetricsHelper.<Boolean> getStreamingMetric(
+                                "milvus", TestHelper.TOPIC_PREFIX, "streaming", "PositionResolved")));
+    }
+
     @Test
     void shouldTakeSnapshotThenHandoffToStreaming() throws Exception {
         createSimpleCollection(collectionName);
@@ -205,6 +229,7 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
 
         start(MilvusConnector.class, connectorConfig(SnapshotMode.NEVER));
         waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
+        waitForConsumerPositionResolved();
 
         milvusClient.insert(InsertReq.builder().collectionName(collectionName)
                 .data(Collections.singletonList(simpleRow(100L, "streaming-only")))
