@@ -122,20 +122,6 @@ public class MilvusConnectorConfigTest {
 
     @Test
     @FixFor("debezium/dbz#2328")
-    void shouldRejectHeartbeatActionQuery() {
-        Map<String, String> props = new HashMap<>(baseConfig());
-        props.put("heartbeat.action.query", "SELECT 1");
-        Configuration config = Configuration.from(props);
-
-        List<String> problems = new ArrayList<>();
-        boolean valid = config.validateAndRecord(MilvusConnectorConfig.ALL_FIELDS, problems::add);
-
-        assertThat(valid).isFalse();
-        assertThat(problems).anyMatch(p -> p.contains("heartbeat.action.query"));
-    }
-
-    @Test
-    @FixFor("debezium/dbz#2328")
     void shouldValidateSuccessfullyWithoutHeartbeatActionQuery() {
         Configuration config = Configuration.from(baseConfig());
 

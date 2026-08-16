@@ -115,8 +115,8 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
         MilvusEventMetadataProvider metadataProvider = new MilvusEventMetadataProvider();
 
         // Milvus has no JDBC connection, so no HeartbeatConnectionProvider/HeartbeatErrorHandler
-        // is supplied here; heartbeat.action.query is rejected outright by MilvusConnectorConfig
-        // validation, so the action-query path in HeartbeatFactory is never exercised.
+        // is supplied here; HeartbeatFactory falls back to interval-based heartbeats when no
+        // connection provider is available.
         ScheduledHeartbeat heartbeat = new HeartbeatFactory<TableId>()
                 .getScheduledHeartbeat(connectorConfig, null, null, queue);
 
