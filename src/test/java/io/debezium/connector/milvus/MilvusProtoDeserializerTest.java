@@ -226,6 +226,70 @@ public class MilvusProtoDeserializerTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldFallBackToRowTimestampsWhenInsertBaseTimestampIsZero() throws Exception {
+        MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
+                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+
+        InsertRequest insert = InsertRequest.newBuilder()
+                .setBase(base(MsgType.Insert, 0L))
+                .setCollectionName("books")
+                .setShardName("books_v0")
+                .addAllTimestamps(List.of(777L, 777L))
+                .addFieldsData(longField("id", 1L, 2L))
+                .setNumRows(2)
+                .build();
+
+        List<MilvusChangeEvent> events = deserializer.deserialize(message(insert.toByteArray()));
+
+        assertThat(events).hasSize(2);
+        assertThat(events).allMatch(e -> e.getTso() == 777L);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldFallBackToRowTimestampsWhenDeleteBaseTimestampIsZero() throws Exception {
+        MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
+                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+
+        IDs ids = IDs.newBuilder()
+                .setIntId(LongArray.newBuilder().addData(9L).build())
+                .build();
+        DeleteRequest delete = DeleteRequest.newBuilder()
+                .setBase(base(MsgType.Delete, 0L))
+                .setCollectionName("books")
+                .setShardName("books_v0")
+                .addTimestamps(888L)
+                .setPrimaryKeys(ids)
+                .build();
+
+        List<MilvusChangeEvent> events = deserializer.deserialize(message(delete.toByteArray()));
+
+        assertThat(events).singleElement().isInstanceOf(MilvusChangeEvent.Delete.class);
+        assertThat(events.get(0).getTso()).isEqualTo(888L);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldPreferBaseTimestampOverRowTimestamps() throws Exception {
+        MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
+                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+
+        InsertRequest insert = InsertRequest.newBuilder()
+                .setBase(base(MsgType.Insert, 123L))
+                .setCollectionName("books")
+                .addTimestamps(999L)
+                .addFieldsData(longField("id", 1L))
+                .setNumRows(1)
+                .build();
+
+        List<MilvusChangeEvent> events = deserializer.deserialize(message(insert.toByteArray()));
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).getTso()).isEqualTo(123L);
+    }
+
+    @Test
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeProtoSingleDdlAndTimetick() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
