@@ -359,13 +359,217 @@ class TimetickOrderingEngineTest {
         assertThat(engine.isStalled()).isTrue();
     }
 
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldAdvanceAllTrackedVchannelsOnChannelTimetick() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.updateWatermark(VC0, 0);
+        engine.updateWatermark(VC1, 0);
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 90));
+        engine.buffer(insertEvent("coll", PCHANNEL, VC1, 110));
+
+        engine.updateWatermark(VC0, 100);
+        engine.updateWatermark(VC1, 80);
+        assertThat(engine.getGlobalWatermark()).isEqualTo(80L);
+
+        engine.updateChannelWatermark(120);
+
+        assertThat(engine.getVchannelTimeticks())
+                .containsEntry(VC0, 120L)
+                .containsEntry(VC1, 120L);
+        assertThat(engine.getGlobalWatermark()).isEqualTo(120L);
+
+        List<MilvusChangeEvent> flushed = engine.flush();
+        assertThat(flushed).hasSize(2);
+        List<Long> tsos = flushed.stream().map(MilvusChangeEvent::getTso).collect(Collectors.toList());
+        assertThat(tsos).containsExactly(90L, 110L);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldNotRegressVchannelTimetickAheadOfChannelTimetick() {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.updateWatermark(VC0, 0);
+        engine.updateWatermark(VC1, 0);
+        engine.updateWatermark(VC0, 200);
+
+        engine.updateChannelWatermark(150);
+
+        assertThat(engine.getVchannelTimeticks())
+                .containsEntry(VC0, 200L)
+                .containsEntry(VC1, 150L);
+        assertThat(engine.getGlobalWatermark()).isEqualTo(150L);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldAdvanceGlobalWatermarkOnChannelTimetickBeforeAnyVchannelIsTracked() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.updateChannelWatermark(100);
+
+        assertThat(engine.getGlobalWatermark()).isEqualTo(100L);
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 100));
+
+        assertThat(engine.getBufferedEventCount()).isZero();
+        assertThat(engine.getLateMessagesDropped()).isEqualTo(1);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldStartLateDiscoveredVchannelFromChannelTimetick() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.updateChannelWatermark(100);
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 150));
+
+        assertThat(engine.getVchannelTimeticks()).containsEntry(VC0, 100L);
+        assertThat(engine.computeWatermark()).isEqualTo(100L);
+        assertThat(engine.getGlobalWatermark()).isEqualTo(100L);
+
+        engine.updateChannelWatermark(160);
+
+        List<MilvusChangeEvent> flushed = engine.flush();
+        assertThat(flushed).hasSize(1);
+        assertThat(flushed.get(0).getTso()).isEqualTo(150L);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldNotRollBackWatermarkOnLowerChannelTimetick() {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.updateWatermark(VC0, 100);
+        engine.updateChannelWatermark(50);
+
+        assertThat(engine.getVchannelTimeticks()).containsEntry(VC0, 100L);
+        assertThat(engine.getGlobalWatermark()).isEqualTo(100L);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldNotRollBackGlobalWatermarkOnLowerChannelTimetickWithNoVchannels() {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.updateChannelWatermark(100);
+        engine.updateChannelWatermark(50);
+
+        assertThat(engine.getGlobalWatermark()).isEqualTo(100L);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldResetStallTimerOnChannelTimetickAdvance() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 100));
+        engine.updateWatermark(VC0, 50);
+
+        clock.advanceMs(4000);
+        assertThat(engine.isStalled()).isFalse();
+
+        engine.updateChannelWatermark(60);
+
+        clock.advanceMs(4000);
+        assertThat(engine.isStalled()).isFalse();
+
+        clock.advanceMs(2000);
+        assertThat(engine.isStalled()).isTrue();
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldEmitDeleteBeforeInsertAtSameTso() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 100, "upserted"));
+        engine.buffer(deleteEvent("coll", PCHANNEL, VC0, 100, List.of(1L)));
+
+        engine.updateWatermark(VC0, 100);
+
+        List<MilvusChangeEvent> flushed = engine.flush();
+        assertThat(flushed).hasSize(2);
+        assertThat(flushed.get(0)).isInstanceOf(MilvusChangeEvent.Delete.class);
+        assertThat(flushed.get(1)).isInstanceOf(MilvusChangeEvent.Insert.class);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldPreserveArrivalOrderWithinOperationTypeAtSameTso() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 100, "first-insert"));
+        engine.buffer(deleteEvent("coll", PCHANNEL, VC0, 100, List.of(1L)));
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 100, "second-insert"));
+        engine.buffer(deleteEvent("coll", PCHANNEL, VC0, 100, List.of(2L)));
+
+        engine.updateWatermark(VC0, 100);
+
+        List<MilvusChangeEvent> flushed = engine.flush();
+        assertThat(flushed).hasSize(4);
+        assertThat(((MilvusChangeEvent.Delete) flushed.get(0)).getPrimaryKeys()).isEqualTo(List.of(1L));
+        assertThat(((MilvusChangeEvent.Delete) flushed.get(1)).getPrimaryKeys()).isEqualTo(List.of(2L));
+        assertThat(rowName(flushed.get(2))).isEqualTo("first-insert");
+        assertThat(rowName(flushed.get(3))).isEqualTo("second-insert");
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldEmitDeleteBeforeInsertAtSameTsoOnForceFlush() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 100, "upserted"));
+        engine.buffer(deleteEvent("coll", PCHANNEL, VC0, 100, List.of(1L)));
+
+        List<MilvusChangeEvent> flushed = engine.forceFlush();
+        assertThat(flushed).hasSize(2);
+        assertThat(flushed.get(0)).isInstanceOf(MilvusChangeEvent.Delete.class);
+        assertThat(flushed.get(1)).isInstanceOf(MilvusChangeEvent.Insert.class);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2437")
+    void shouldNotReorderDeletesAcrossDifferentTsos() throws MilvusBufferFullException {
+        TimetickOrderingEngine engine = newEngine();
+
+        engine.buffer(insertEvent("coll", PCHANNEL, VC0, 90));
+        engine.buffer(deleteEvent("coll", PCHANNEL, VC0, 100, List.of(1L)));
+
+        engine.updateWatermark(VC0, 100);
+
+        List<MilvusChangeEvent> flushed = engine.flush();
+        assertThat(flushed).hasSize(2);
+        assertThat(flushed.get(0)).isInstanceOf(MilvusChangeEvent.Insert.class);
+        assertThat(flushed.get(0).getTso()).isEqualTo(90L);
+        assertThat(flushed.get(1)).isInstanceOf(MilvusChangeEvent.Delete.class);
+    }
+
+    private static Object rowName(MilvusChangeEvent event) {
+        return ((MilvusChangeEvent.Insert) event).getRow().getFieldValues()[1];
+    }
+
     private static MilvusChangeEvent.Insert insertEvent(String collection, String pchannel,
                                                         String vchannel, long tso) {
+        return insertEvent(collection, pchannel, vchannel, tso, "row-" + tso);
+    }
+
+    private static MilvusChangeEvent.Insert insertEvent(String collection, String pchannel,
+                                                        String vchannel, long tso, String rowName) {
         return new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso,
                 new MilvusRow(
                         new String[]{ "id", "name" },
-                        new Object[]{ tso, "row-" + tso },
+                        new Object[]{ tso, rowName },
                         new io.milvus.grpc.DataType[]{ io.milvus.grpc.DataType.Int64, io.milvus.grpc.DataType.VarChar }));
+    }
+
+    private static MilvusChangeEvent.Delete deleteEvent(String collection, String pchannel,
+                                                        String vchannel, long tso, Object primaryKeys) {
+        return new MilvusChangeEvent.Delete(collection, pchannel, vchannel, tso, primaryKeys);
     }
 
     /**
