@@ -45,7 +45,7 @@ While streaming, the connector deserializes each raw MQ message and buffers it i
 
 - Milvus 2.5 or later, deployed with **Kafka as the MQ backend** (`mq.type: kafka` in the Milvus configuration). Deployments backed by Pulsar or RocksMQ are not supported.
 - Network access from the connector to the Milvus gRPC endpoint, to the Kafka cluster Milvus uses as its MQ, and to the etcd cluster backing Milvus.
-- Java 21 or later.
+- Java 17 or later.
 
 ## Example configuration
 
@@ -76,7 +76,6 @@ The connector supports a single task; `tasks.max` values greater than `1` are ig
 - The connector emits no update (`op=u`) events. Milvus implements an upsert as a delete followed by an insert, and the connector emits that pair.
 - Delete events carry a primary-key-only `before` image, because Milvus does not publish the prior state of a deleted entity.
 - Collection DDL (create/drop) is tracked internally for ordering but is not emitted as schema change events.
-- `heartbeat.action.query` is rejected at validation time: it requires a JDBC connection to execute the query against, and Milvus is not a relational data source. Interval-based heartbeats (`heartbeat.interval.ms`, `heartbeat.topics.prefix`) are fully supported.
 
 ## Building and testing the Milvus connector
 
