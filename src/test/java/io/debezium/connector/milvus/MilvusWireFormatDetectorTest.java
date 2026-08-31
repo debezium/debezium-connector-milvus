@@ -282,10 +282,6 @@ public class MilvusWireFormatDetectorTest {
             this(messagesByTopic, Map.of());
         }
 
-        /**
-         * @param messagesByTopic          messages served after a strategy-based seek (EARLIEST)
-         * @param messagesAfterStoredOffset messages served after a stored-offset seek
-         */
         private FakeMilvusMessageConsumer(Map<String, List<RawMilvusMessage>> messagesByTopic,
                                           Map<String, List<RawMilvusMessage>> messagesAfterStoredOffset) {
             this.messagesByTopic = messagesByTopic;

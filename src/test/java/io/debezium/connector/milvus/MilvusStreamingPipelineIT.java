@@ -175,11 +175,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
                 .build();
     }
 
-    /**
-     * Same as {@link #connectorConfig()} but with {@code milvus.wire.format}
-     * at its {@code auto} default, so the connector must probe the pchannel
-     * to discover the format instead of trusting the test's knowledge of it.
-     */
     private Configuration autoDetectConfig() {
         return connectorConfig().edit()
                 .with(MilvusConnectorConfig.WIRE_FORMAT, MilvusChangeEventSourceFactory.WIRE_FORMAT_AUTO)
