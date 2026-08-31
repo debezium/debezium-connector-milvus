@@ -129,6 +129,16 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    void shouldSkipUnrecognizablePayloadWhenRecognizableMessageFollows() {
+        MilvusWireFormatDetector detector = detector("auto", List.of(
+                message(new byte[0], 0L),
+                message(new byte[]{ 0x55, 0x66 }, 1L),
+                message(protoCreate().toByteArray(), 2L)));
+
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+    }
+
+    @Test
     @FixFor("debezium/dbz#2124")
     void shouldRejectMixedFormatsAcrossChannels() throws Exception {
         FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(Map.of(
@@ -139,6 +149,19 @@ public class MilvusWireFormatDetectorTest {
         assertThatThrownBy(() -> detector.detect(Set.of(TOPIC, "by-dev-rootcoord-dml_1")))
                 .isInstanceOf(MilvusWireFormatMismatchException.class)
                 .hasMessageContaining("Mixed wire formats detected");
+    }
+
+    @Test
+    void shouldReprobeFromEarliestWhenStoredOffsetYieldsOnlyTimeTicks() {
+        FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
+                Map.of(TOPIC, List.of(message(protoCreate().toByteArray(), 1L))),
+                Map.of(TOPIC, List.of(message(protoTimeTick().toByteArray(), 42L))));
+        MilvusWireFormatDetector detector = detector("auto", consumer);
+
+        assertThat(detector.detect(Set.of(TOPIC), Map.of(new TopicPartition(TOPIC, 0), 42L)))
+                .isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(consumer.storedOffsetProbes).isEqualTo(1);
+        assertThat(consumer.earliestProbes).isEqualTo(1);
     }
 
     private static MilvusWireFormatDetector detector(String configuredWireFormat,
@@ -248,22 +271,42 @@ public class MilvusWireFormatDetectorTest {
 
     private static final class FakeMilvusMessageConsumer implements MilvusMessageConsumer {
         private final Map<String, List<RawMilvusMessage>> messagesByTopic;
+        private final Map<String, List<RawMilvusMessage>> messagesAfterStoredOffset;
         private String currentPchannel;
         private boolean delivered;
+        private boolean seekedToStoredOffset;
+        private int storedOffsetProbes;
+        private int earliestProbes;
 
         private FakeMilvusMessageConsumer(Map<String, List<RawMilvusMessage>> messagesByTopic) {
+            this(messagesByTopic, Map.of());
+        }
+
+        /**
+         * @param messagesByTopic          messages served after a strategy-based seek (EARLIEST)
+         * @param messagesAfterStoredOffset messages served after a stored-offset seek
+         */
+        private FakeMilvusMessageConsumer(Map<String, List<RawMilvusMessage>> messagesByTopic,
+                                          Map<String, List<RawMilvusMessage>> messagesAfterStoredOffset) {
             this.messagesByTopic = messagesByTopic;
+            this.messagesAfterStoredOffset = messagesAfterStoredOffset;
         }
 
         @Override
         public void assignAndSeek(Map<TopicPartition, Long> offsets) {
+            this.currentPchannel = offsets.keySet().iterator().next().topic();
+            this.seekedToStoredOffset = true;
+            this.delivered = false;
+            this.storedOffsetProbes++;
         }
 
         @Override
         public void assignAndSeek(Set<String> pchannels, SeekPosition position,
                                   Map<TopicPartition, Long> storedOffsets) {
             this.currentPchannel = pchannels.iterator().next();
+            this.seekedToStoredOffset = false;
             this.delivered = false;
+            this.earliestProbes++;
         }
 
         @Override
@@ -272,7 +315,8 @@ public class MilvusWireFormatDetectorTest {
                 return List.of();
             }
             delivered = true;
-            return messagesByTopic.getOrDefault(currentPchannel, List.of());
+            Map<String, List<RawMilvusMessage>> source = seekedToStoredOffset ? messagesAfterStoredOffset : messagesByTopic;
+            return source.getOrDefault(currentPchannel, List.of());
         }
 
         @Override

@@ -142,7 +142,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
         MilvusChangeEventSourceFactory factory = new MilvusChangeEventSourceFactory(
                 connectorConfig, dispatcher, schema, checkpointReader, snapshotQueryClient, metadataClient,
-                streamingMetrics);
+                streamingMetrics, previousOffsets.getTheOnlyOffset());
 
         SnapshotterService snapshotterService = MilvusSnapshotter.createService();
 
