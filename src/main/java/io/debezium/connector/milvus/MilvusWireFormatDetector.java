@@ -160,8 +160,6 @@ public class MilvusWireFormatDetector {
                     continue;
                 }
                 if (kind == PayloadKind.UNKNOWN) {
-                    // A stray record (an empty value, or a message type the probe does not classify)
-                    // must not abort detection as long as a classifiable message follows in time.
                     if (firstUnrecognized == null) {
                         firstUnrecognized = message;
                     }
