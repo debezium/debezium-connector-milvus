@@ -32,6 +32,7 @@ import com.google.gson.JsonObject;
 
 import io.debezium.config.Configuration;
 import io.debezium.connector.milvus.MilvusConnectorConfig.SnapshotMode;
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.connector.milvus.util.MilvusTestContainer;
 import io.debezium.connector.milvus.util.TestHelper;
 import io.debezium.embedded.AbstractConnectorTest;
@@ -124,9 +125,9 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
     private Configuration connectorConfig(SnapshotMode snapshotMode) {
         return TestHelper.defaultConfig(bootstrap).edit()
                 .with(MilvusConnectorConfig.PCHANNEL_NAME, PCHANNEL)
-                .with(MilvusConnectorConfig.WIRE_FORMAT, MilvusProtoDeserializer.FORMAT_PROTO_SINGLE)
+                .with(MilvusConnectorConfig.WIRE_FORMAT, WireFormat.PROTO_SINGLE)
                 .with(MilvusConnectorConfig.TIMETICK_STALL_TIMEOUT_MS, 5_000L)
-                .with(MilvusConnectorConfig.SNAPSHOT_MODE_FIELD, snapshotMode.getValue())
+                .with(MilvusConnectorConfig.SNAPSHOT_MODE_FIELD, snapshotMode)
                 .build();
     }
 

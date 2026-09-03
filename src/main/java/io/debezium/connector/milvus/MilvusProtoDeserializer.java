@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.util.Collect;
 import io.debezium.util.Strings;
 import io.milvus.grpc.ArrayArray;
@@ -46,8 +47,9 @@ import milvus.proto.msg.Msg.TimeTickMsg;
  * Deserializes a raw Milvus MQ message into typed {@link MilvusChangeEvent}s.
  *
  * <p>
- * Two wire formats are supported, selected by the {@code wireFormat} passed at
- * construction time:
+ * Two wire formats are supported, selected by the {@link WireFormat} passed at
+ * construction time, which must already be resolved (never
+ * {@link WireFormat#AUTO}):
  * </p>
  * <ul>
  * <li><b>{@code proto_single}</b> — each raw message payload is exactly one
@@ -75,13 +77,18 @@ public class MilvusProtoDeserializer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MilvusProtoDeserializer.class);
 
-    public static final String FORMAT_MSGPACK_BATCH = "msgpack_batch";
-    public static final String FORMAT_PROTO_SINGLE = "proto_single";
-
-    private final String wireFormat;
+    private final WireFormat wireFormat;
     private final MilvusColumnarPivot pivot;
 
-    public MilvusProtoDeserializer(String wireFormat, MilvusColumnarPivot pivot) {
+    /**
+     * @param wireFormat the resolved wire format; must not be null or
+     *                   {@link WireFormat#AUTO}
+     * @param pivot      pivots columnar insert payloads into rows
+     */
+    public MilvusProtoDeserializer(WireFormat wireFormat, MilvusColumnarPivot pivot) {
+        if (wireFormat == null || wireFormat == WireFormat.AUTO) {
+            throw new IllegalArgumentException("wireFormat must be a resolved format but was " + wireFormat);
+        }
         this.wireFormat = wireFormat;
         this.pivot = pivot;
     }
@@ -101,11 +108,11 @@ public class MilvusProtoDeserializer {
             throws MilvusWireFormatMismatchException {
         if (message == null || message.getValue() == null || message.getValue().length == 0) {
             throw new MilvusWireFormatMismatchException(
-                    wireFormat, "empty", safeTopic(message), safePartition(message), safeOffset(message),
+                    wireFormat.getValue(), "empty", safeTopic(message), safePartition(message), safeOffset(message),
                     "message value is null or empty");
         }
 
-        return FORMAT_PROTO_SINGLE.equals(wireFormat)
+        return wireFormat == WireFormat.PROTO_SINGLE
                 ? deserializeProtoSingle(message)
                 : deserializeMsgPackBatch(message);
     }
@@ -180,7 +187,7 @@ public class MilvusProtoDeserializer {
         }
         List<MilvusRow> rows = pivot.pivot(
                 columns, (int) numRows,
-                wireFormat, safeTopic(message), safePartition(message), safeOffset(message));
+                wireFormat.getValue(), safeTopic(message), safePartition(message), safeOffset(message));
 
         List<MilvusChangeEvent> events = new ArrayList<>(rows.size());
         for (MilvusRow row : rows) {
@@ -529,7 +536,7 @@ public class MilvusProtoDeserializer {
         }
         List<MilvusRow> rows = pivot.pivot(
                 columns, numRows,
-                wireFormat, safeTopic(message), safePartition(message), safeOffset(message));
+                wireFormat.getValue(), safeTopic(message), safePartition(message), safeOffset(message));
         List<MilvusChangeEvent> events = new ArrayList<>(rows.size());
         for (MilvusRow row : rows) {
             events.add(new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso, row));
@@ -681,11 +688,11 @@ public class MilvusProtoDeserializer {
     private MilvusWireFormatMismatchException mismatch(RawMilvusMessage message, String detail, Throwable cause) {
         if (cause != null) {
             return new MilvusWireFormatMismatchException(
-                    wireFormat, "unknown", safeTopic(message), safePartition(message), safeOffset(message),
+                    wireFormat.getValue(), "unknown", safeTopic(message), safePartition(message), safeOffset(message),
                     detail, cause);
         }
         return new MilvusWireFormatMismatchException(
-                wireFormat, "unknown", safeTopic(message), safePartition(message), safeOffset(message),
+                wireFormat.getValue(), "unknown", safeTopic(message), safePartition(message), safeOffset(message),
                 detail);
     }
 
