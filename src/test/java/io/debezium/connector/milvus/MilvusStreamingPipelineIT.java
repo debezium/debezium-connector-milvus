@@ -31,6 +31,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
 import io.debezium.config.Configuration;
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.connector.milvus.util.MilvusTestContainer;
 import io.debezium.connector.milvus.util.TestHelper;
 import io.debezium.data.Json;
@@ -170,14 +171,14 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
     private Configuration connectorConfig() {
         return TestHelper.defaultConfig(bootstrap).edit()
                 .with(MilvusConnectorConfig.PCHANNEL_NAME, PCHANNEL)
-                .with(MilvusConnectorConfig.WIRE_FORMAT, MilvusProtoDeserializer.FORMAT_PROTO_SINGLE)
+                .with(MilvusConnectorConfig.WIRE_FORMAT, WireFormat.PROTO_SINGLE)
                 .with(MilvusConnectorConfig.TIMETICK_STALL_TIMEOUT_MS, 5_000L)
                 .build();
     }
 
     private Configuration autoDetectConfig() {
         return connectorConfig().edit()
-                .with(MilvusConnectorConfig.WIRE_FORMAT, MilvusChangeEventSourceFactory.WIRE_FORMAT_AUTO)
+                .with(MilvusConnectorConfig.WIRE_FORMAT, WireFormat.AUTO)
                 .build();
     }
 

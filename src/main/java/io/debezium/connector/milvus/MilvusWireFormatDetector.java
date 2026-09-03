@@ -7,7 +7,6 @@ package io.debezium.connector.milvus;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -20,6 +19,7 @@ import org.msgpack.value.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.util.Collect;
 import io.debezium.util.Strings;
 import io.milvus.grpc.MsgType;
@@ -34,9 +34,15 @@ import milvus.proto.msg.Msg.TimeTickMsg;
  * Detects the Milvus MQ wire format used by the source cluster.
  *
  * <p>
- * Detection probes the beginning of each configured pchannel and inspects the
- * first non-timetick payload. The format is expected to be stable cluster-wide,
- * so mixed detections are treated as fatal.
+ * Detection probes each configured pchannel and inspects the first payload that
+ * is neither a timetick nor unrecognizable. On a warm restart the probe seeks to
+ * the stored MQ offset, so the first message it sees is the last one already
+ * processed (streaming itself resumes one past it); that message is guaranteed
+ * to reflect the format in use, unlike potentially pre-upgrade payloads at the
+ * head of the topic. When nothing recognizable follows the stored offset within
+ * {@link #PROBE_TIMEOUT}, the pchannel is re-probed from {@code EARLIEST}. The
+ * format is expected to be stable cluster-wide, so mixed detections are treated
+ * as fatal.
  * </p>
  */
 public class MilvusWireFormatDetector {
@@ -68,12 +74,12 @@ public class MilvusWireFormatDetector {
      *
      * <p>
      * Convenience overload that starts the probe from {@code EARLIEST}.
-     * Prefer {@link #detect(Set, Map)} on warm restart so the probe reads messages
-     * at the actual processing position rather than potentially pre-upgrade
-     * messages.
+     * Prefer {@link #detect(Set, Map)} on warm restart so the probe reads the
+     * last already-processed message rather than potentially pre-upgrade
+     * payloads at the head of the topic.
      * </p>
      */
-    public String detect(Set<String> pchannels) {
+    public WireFormat detect(Set<String> pchannels) {
         return detect(pchannels, Map.of());
     }
 
@@ -81,56 +87,95 @@ public class MilvusWireFormatDetector {
      * Probes the given pchannels and returns the cluster wire format.
      *
      * <p>
-     * When a stored offset exists for a pchannel the probe starts there, so a
-     * warm restart inspects the messages that will actually be processed next.
-     * An idle pchannel carries nothing but timeticks after the stored offset, so
-     * if that probe finds no data message the pchannel is re-probed from
-     * {@code EARLIEST} before falling back to the configured/default format.
+     * When a stored offset exists for a pchannel the probe seeks to it, so the
+     * first message inspected on a warm restart is the last one already
+     * processed (streaming resumes one past it). If that probe finds no
+     * recognizable data message, whether because an idle pchannel carries
+     * nothing but timeticks after the stored offset or because only
+     * unrecognizable payloads follow it, the pchannel is re-probed from
+     * {@code EARLIEST}. Unrecognizable payloads are only fatal when no probe
+     * finds a recognizable message; the exception then points at the first
+     * unrecognizable payload after the stored offset when there is one, since
+     * that is where streaming will run into it.
      * </p>
      *
      * @param pchannels     pchannels to probe; null or empty returns the fallback
      * @param storedOffsets last-committed Kafka offsets keyed by
      *                      {@link TopicPartition};
      *                      empty map falls back to {@code EARLIEST}
+     * @return the detected format, never {@link WireFormat#AUTO}
      */
-    public String detect(Set<String> pchannels, Map<TopicPartition, Long> storedOffsets) {
-        String configured = normalizedConfiguredFormat();
+    public WireFormat detect(Set<String> pchannels, Map<TopicPartition, Long> storedOffsets) {
+        WireFormat configured = config.getWireFormat();
         if (Collect.isNullOrEmpty(pchannels)) {
             return fallbackFormat(configured, "No pchannels configured for wire-format probing");
         }
 
         try (MilvusMessageConsumer consumer = messageConsumerFactory.create()) {
-            String detected = null;
+            WireFormat detected = null;
             for (String pchannel : pchannels) {
-                String channelFormat = probeChannel(consumer, pchannel, storedOffsets);
-                if (channelFormat == null && hasStoredOffset(pchannel, storedOffsets)) {
-                    LOGGER.info("No non-timetick messages found on pchannel '{}' after the stored offset; "
-                            + "re-probing from the earliest available message", pchannel);
-                    channelFormat = probeChannel(consumer, pchannel, Map.of());
-                }
+                WireFormat channelFormat = probePchannel(consumer, pchannel, storedOffsets);
                 if (channelFormat == null) {
                     continue;
                 }
                 if (detected == null) {
                     detected = channelFormat;
                 }
-                else if (!detected.equals(channelFormat)) {
+                else if (detected != channelFormat) {
                     throw new MilvusWireFormatMismatchException(
-                            detected, channelFormat, pchannel, config.getKafkaPartitionIndex(), -1L,
-                            "Mixed wire formats detected across pchannels");
+                            detected.getValue(), channelFormat.getValue(), pchannel, config.getKafkaPartitionIndex(),
+                            -1L, "Mixed wire formats detected across pchannels");
                 }
             }
 
             if (detected == null) {
-                return fallbackFormat(configured, "No non-timetick messages found during probe");
+                return fallbackFormat(configured, "No data messages found during probe");
             }
-            if (!"auto".equals(configured) && !configured.equals(detected)) {
+            if (configured != WireFormat.AUTO && configured != detected) {
                 throw new MilvusWireFormatMismatchException(
-                        configured, detected, "<probe>", config.getKafkaPartitionIndex(), -1L,
+                        configured.getValue(), detected.getValue(), "<probe>", config.getKafkaPartitionIndex(), -1L,
                         "Configured wire format does not match detected payload");
             }
             return detected;
         }
+    }
+
+    /**
+     * Probes a single pchannel, starting from its stored offset when one exists
+     * and re-probing from {@code EARLIEST} when that first pass finds no
+     * recognizable data message.
+     */
+    private WireFormat probePchannel(MilvusMessageConsumer consumer, String pchannel,
+                                     Map<TopicPartition, Long> storedOffsets) {
+        ProbeResult result = probe(consumer, pchannel, storedOffsets);
+        if (result.format() == null && hasStoredOffset(pchannel, storedOffsets)) {
+            LOGGER.info("No recognizable data message found on pchannel '{}' after the stored offset ({}); "
+                    + "re-probing from the earliest available message", pchannel,
+                    result.sawUnrecognized()
+                            ? "only timeticks and " + result.unrecognized() + " unrecognizable payload(s)"
+                            : "only timeticks");
+            ProbeResult earliest = probe(consumer, pchannel, Map.of());
+            if (earliest.format() != null) {
+                warnSkippedUnrecognized(pchannel, result);
+                warnSkippedUnrecognized(pchannel, earliest);
+                return earliest.format();
+            }
+            if (!result.sawUnrecognized()) {
+                result = earliest;
+            }
+        }
+        if (result.format() != null) {
+            warnSkippedUnrecognized(pchannel, result);
+            return result.format();
+        }
+        if (result.sawUnrecognized()) {
+            RawMilvusMessage first = result.firstUnrecognized();
+            throw new MilvusWireFormatMismatchException(
+                    config.getWireFormat().getValue(), "unknown", first.getTopic(), first.getPartition(), first.getOffset(),
+                    "Unrecognizable payload encountered during wire-format probe and no recognizable message"
+                            + " was found within " + PROBE_TIMEOUT.toSeconds() + "s");
+        }
+        return null;
     }
 
     private static boolean hasStoredOffset(String pchannel, Map<TopicPartition, Long> storedOffsets) {
@@ -138,8 +183,13 @@ public class MilvusWireFormatDetector {
                 .anyMatch(tp -> tp.topic().equals(pchannel));
     }
 
-    private String probeChannel(MilvusMessageConsumer consumer, String pchannel,
-                                Map<TopicPartition, Long> storedOffsets) {
+    /**
+     * Runs one probe pass over a pchannel, from the stored offset when
+     * {@code storedOffsets} carries one for it and from {@code EARLIEST}
+     * otherwise, and stops at the first recognizable data message.
+     */
+    private ProbeResult probe(MilvusMessageConsumer consumer, String pchannel,
+                              Map<TopicPartition, Long> storedOffsets) {
         if (hasStoredOffset(pchannel, storedOffsets)) {
             consumer.assignAndSeek(storedOffsets);
         }
@@ -153,8 +203,7 @@ public class MilvusWireFormatDetector {
         while (Instant.now().isBefore(deadline)) {
             Duration remaining = Duration.between(Instant.now(), deadline);
             Duration timeout = remaining.isNegative() || remaining.isZero() ? Duration.ofMillis(1) : remaining;
-            List<RawMilvusMessage> messages = consumer.poll(timeout);
-            for (RawMilvusMessage message : messages) {
+            for (RawMilvusMessage message : consumer.poll(timeout)) {
                 PayloadKind kind = detectPayloadKind(message.getValue());
                 if (kind == PayloadKind.TIMETICK) {
                     continue;
@@ -166,49 +215,40 @@ public class MilvusWireFormatDetector {
                     unrecognized++;
                     continue;
                 }
-                if (unrecognized > 0) {
-                    LOGGER.warn("Skipped {} unrecognizable message(s) on pchannel '{}' during wire-format probe"
-                            + " (first at partition={}, offset={})", unrecognized, pchannel,
-                            firstUnrecognized.getPartition(), firstUnrecognized.getOffset());
-                }
-                String format = kind == PayloadKind.MSGPACK_BATCH
-                        ? MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH
-                        : MilvusProtoDeserializer.FORMAT_PROTO_SINGLE;
+                WireFormat format = kind == PayloadKind.MSGPACK_BATCH
+                        ? WireFormat.MSGPACK_BATCH
+                        : WireFormat.PROTO_SINGLE;
                 validateConfiguredFormatIfExplicit(message, format);
-                return format;
+                return new ProbeResult(format, firstUnrecognized, unrecognized);
             }
         }
-        if (firstUnrecognized != null) {
-            throw new MilvusWireFormatMismatchException(
-                    normalizedConfiguredFormat(), "unknown", firstUnrecognized.getTopic(),
-                    firstUnrecognized.getPartition(), firstUnrecognized.getOffset(),
-                    "Unrecognizable payload encountered during wire-format probe and no recognizable message"
-                            + " followed within " + PROBE_TIMEOUT.toSeconds() + "s");
-        }
-        return null;
+        return new ProbeResult(null, firstUnrecognized, unrecognized);
     }
 
-    private void validateConfiguredFormatIfExplicit(RawMilvusMessage message, String detectedFormat) {
-        String configured = normalizedConfiguredFormat();
-        if (!"auto".equals(configured) && !configured.equals(detectedFormat)) {
-            throw new MilvusWireFormatMismatchException(
-                    configured, detectedFormat, message.getTopic(), message.getPartition(), message.getOffset(),
-                    "Configured wire format does not match detected payload");
+    private static void warnSkippedUnrecognized(String pchannel, ProbeResult result) {
+        if (result.sawUnrecognized()) {
+            LOGGER.warn("Skipped {} unrecognizable message(s) on pchannel '{}' during wire-format probe"
+                    + " (first at partition={}, offset={})", result.unrecognized(), pchannel,
+                    result.firstUnrecognized().getPartition(), result.firstUnrecognized().getOffset());
         }
     }
 
-    private String fallbackFormat(String configuredFormat, String reason) {
-        if (!"auto".equals(configuredFormat)) {
-            LOGGER.info("{}; using explicitly configured wire format {}", reason, configuredFormat);
+    private void validateConfiguredFormatIfExplicit(RawMilvusMessage message, WireFormat detectedFormat) {
+        WireFormat configured = config.getWireFormat();
+        if (configured != WireFormat.AUTO && configured != detectedFormat) {
+            throw new MilvusWireFormatMismatchException(
+                    configured.getValue(), detectedFormat.getValue(), message.getTopic(), message.getPartition(),
+                    message.getOffset(), "Configured wire format does not match detected payload");
+        }
+    }
+
+    private WireFormat fallbackFormat(WireFormat configuredFormat, String reason) {
+        if (configuredFormat != WireFormat.AUTO) {
+            LOGGER.info("{}; using explicitly configured wire format {}", reason, configuredFormat.getValue());
             return configuredFormat;
         }
-        LOGGER.warn("{}; defaulting wire format to {}", reason, MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH);
-        return MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH;
-    }
-
-    private String normalizedConfiguredFormat() {
-        String configured = config.getWireFormat();
-        return configured == null ? "auto" : configured.trim().toLowerCase();
+        LOGGER.warn("{}; defaulting wire format to {}", reason, WireFormat.MSGPACK_BATCH.getValue());
+        return WireFormat.MSGPACK_BATCH;
     }
 
     private PayloadKind detectPayloadKind(byte[] data) {
@@ -356,5 +396,21 @@ public class MilvusWireFormatDetector {
         PROTO_SINGLE,
         TIMETICK,
         UNKNOWN
+    }
+
+    /**
+     * Outcome of one probe pass over a pchannel.
+     *
+     * @param format            the format of the first recognizable data message,
+     *                          or {@code null} when the pass saw none
+     * @param firstUnrecognized the first unrecognizable payload the pass skipped,
+     *                          or {@code null} when it skipped none
+     * @param unrecognized      how many unrecognizable payloads the pass skipped
+     */
+    private record ProbeResult(WireFormat format, RawMilvusMessage firstUnrecognized, int unrecognized) {
+
+        boolean sawUnrecognized() {
+            return firstUnrecognized != null;
+        }
     }
 }

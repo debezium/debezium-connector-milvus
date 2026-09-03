@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.msgpack.core.MessageBufferPacker;
 import org.msgpack.core.MessagePack;
 
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.doc.FixFor;
 import io.milvus.grpc.BoolArray;
 import io.milvus.grpc.DataType;
@@ -60,7 +61,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeProtoSingleInsertIntoRowEvents() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         InsertRequest insert = InsertRequest.newBuilder()
                 .setBase(base(MsgType.Insert, 123L))
@@ -102,7 +103,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldInferProtoInsertRowCountFromFieldData() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         InsertRequest insert = InsertRequest.newBuilder()
                 .setBase(base(MsgType.Insert, 77L))
@@ -121,7 +122,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeInsertWithJsonField() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         JSONArray jsonArr = JSONArray.newBuilder()
                 .addData(com.google.protobuf.ByteString.copyFromUtf8("{\"k\":1}"))
@@ -152,7 +153,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeInsertWithBoolField() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         BoolArray boolArr = BoolArray.newBuilder().addData(true).addData(false).build();
         FieldData boolField = FieldData.newBuilder()
@@ -180,7 +181,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeProtoSingleDeleteWithInt64PKsViaIDsOneof() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         IDs ids = IDs.newBuilder()
                 .setIntId(LongArray.newBuilder().addData(9L).addData(11L).build())
@@ -206,7 +207,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeProtoSingleDeleteWithStringPKsViaIDsOneof() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         IDs ids = IDs.newBuilder()
                 .setStrId(StringArray.newBuilder().addData("pk-a").addData("pk-b").build())
@@ -229,7 +230,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2437")
     void shouldFallBackToRowTimestampsWhenInsertBaseTimestampIsZero() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         InsertRequest insert = InsertRequest.newBuilder()
                 .setBase(base(MsgType.Insert, 0L))
@@ -250,7 +251,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2437")
     void shouldFallBackToRowTimestampsWhenDeleteBaseTimestampIsZero() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         IDs ids = IDs.newBuilder()
                 .setIntId(LongArray.newBuilder().addData(9L).build())
@@ -273,7 +274,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2437")
     void shouldPreferBaseTimestampOverRowTimestamps() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         InsertRequest insert = InsertRequest.newBuilder()
                 .setBase(base(MsgType.Insert, 123L))
@@ -293,7 +294,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeProtoSingleDdlAndTimetick() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         CreateCollectionRequest create = CreateCollectionRequest.newBuilder()
                 .setBase(base(MsgType.CreateCollection, 42L))
@@ -323,7 +324,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldThrowOnEmptyMessage() {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         assertThatThrownBy(() -> deserializer
                 .deserialize(new RawMilvusMessage(TOPIC, 0, 1L, null, new byte[0], 0L)))
@@ -335,7 +336,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldThrowOnUnrecognizedProtoMsgType() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_PROTO_SINGLE, pivot);
+                WireFormat.PROTO_SINGLE, pivot);
 
         TimeTickMsg withUnknownType = TimeTickMsg.newBuilder()
                 .setBase(MsgBase.newBuilder()
@@ -353,7 +354,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeMsgpackBatchInsertAndDelete() throws Exception {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH, pivot);
+                WireFormat.MSGPACK_BATCH, pivot);
 
         byte[] payload = msgpackBatch();
 
@@ -375,7 +376,7 @@ public class MilvusProtoDeserializerTest {
     @FixFor("debezium/dbz#2089")
     void shouldThrowOnMalformedMsgpackPayload() {
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(
-                MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH, pivot);
+                WireFormat.MSGPACK_BATCH, pivot);
 
         assertThatThrownBy(() -> deserializer.deserialize(message(new byte[]{ 0x01, 0x02, 0x03 })))
                 .isInstanceOf(MilvusWireFormatMismatchException.class)
