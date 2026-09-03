@@ -59,20 +59,166 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             return value;
         }
 
+        /**
+         * Determine if the supplied value is one of the predefined options.
+         *
+         * @param value the configuration property value; may be null
+         * @return the matching option, or null if no match is found
+         */
         public static SnapshotMode parse(String value) {
-            return parse(value, INITIAL);
-        }
-
-        public static SnapshotMode parse(String value, SnapshotMode defaultValue) {
             if (value == null) {
-                return defaultValue;
+                return null;
             }
-            for (SnapshotMode mode : values()) {
-                if (mode.value.equalsIgnoreCase(value)) {
-                    return mode;
+            value = value.trim();
+            for (SnapshotMode option : SnapshotMode.values()) {
+                if (option.getValue().equalsIgnoreCase(value)) {
+                    return option;
                 }
             }
-            return defaultValue;
+            return null;
+        }
+
+        /**
+         * Determine if the supplied value is one of the predefined options.
+         *
+         * @param value        the configuration property value; may be null
+         * @param defaultValue the default value; may be null
+         * @return the matching option, or null if no match is found and the
+         *         non-null default is invalid
+         */
+        public static SnapshotMode parse(String value, String defaultValue) {
+            SnapshotMode mode = parse(value);
+            if (mode == null && defaultValue != null) {
+                mode = parse(defaultValue);
+            }
+            return mode;
+        }
+    }
+
+    /**
+     * The serialization format of the Milvus MQ payloads on the pchannel.
+     */
+    public enum WireFormat implements EnumeratedValue {
+        /**
+         * Probe the pchannel when streaming starts and detect the format from
+         * the first recognizable data message.
+         */
+        AUTO("auto"),
+        /**
+         * Each MQ record is a MsgPack array
+         * {@code [msgType, pchannel, messages[]]} carrying a batch of messages.
+         */
+        MSGPACK_BATCH("msgpack_batch"),
+        /**
+         * Each MQ record is exactly one protobuf-encoded {@code msg.Msg} record.
+         */
+        PROTO_SINGLE("proto_single");
+
+        private final String value;
+
+        WireFormat(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public String getValue() {
+            return value;
+        }
+
+        /**
+         * Determine if the supplied value is one of the predefined options.
+         *
+         * @param value the configuration property value; may be null
+         * @return the matching option, or null if no match is found
+         */
+        public static WireFormat parse(String value) {
+            if (value == null) {
+                return null;
+            }
+            value = value.trim();
+            for (WireFormat option : WireFormat.values()) {
+                if (option.getValue().equalsIgnoreCase(value)) {
+                    return option;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Determine if the supplied value is one of the predefined options.
+         *
+         * @param value        the configuration property value; may be null
+         * @param defaultValue the default value; may be null
+         * @return the matching option, or null if no match is found and the
+         *         non-null default is invalid
+         */
+        public static WireFormat parse(String value, String defaultValue) {
+            WireFormat format = parse(value);
+            if (format == null && defaultValue != null) {
+                format = parse(defaultValue);
+            }
+            return format;
+        }
+    }
+
+    /**
+     * How a Milvus upsert (a delete followed by an insert with the same
+     * timestamp) is represented in the emitted change events.
+     */
+    public enum UpsertMode implements EnumeratedValue {
+        /**
+         * Emit the delete and insert as separate events, as they arrive.
+         */
+        PASSTHROUGH("passthrough"),
+        /**
+         * Correlate the delete/insert pair into a single update event.
+         */
+        CORRELATE("correlate");
+
+        private final String value;
+
+        UpsertMode(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public String getValue() {
+            return value;
+        }
+
+        /**
+         * Determine if the supplied value is one of the predefined options.
+         *
+         * @param value the configuration property value; may be null
+         * @return the matching option, or null if no match is found
+         */
+        public static UpsertMode parse(String value) {
+            if (value == null) {
+                return null;
+            }
+            value = value.trim();
+            for (UpsertMode option : UpsertMode.values()) {
+                if (option.getValue().equalsIgnoreCase(value)) {
+                    return option;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Determine if the supplied value is one of the predefined options.
+         *
+         * @param value        the configuration property value; may be null
+         * @param defaultValue the default value; may be null
+         * @return the matching option, or null if no match is found and the
+         *         non-null default is invalid
+         */
+        public static UpsertMode parse(String value, String defaultValue) {
+            UpsertMode mode = parse(value);
+            if (mode == null && defaultValue != null) {
+                mode = parse(defaultValue);
+            }
+            return mode;
         }
     }
 
@@ -162,8 +308,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     public static final Field SNAPSHOT_MODE_FIELD = Field.create("snapshot.mode")
             .withDisplayName("Snapshot mode")
-            .withType(Type.STRING)
-            .withDefault("initial")
+            .withEnum(SnapshotMode.class, SnapshotMode.INITIAL)
             .withWidth(Width.SHORT)
             .withImportance(Importance.HIGH)
             .withDescription("Snapshot mode: 'initial', 'never', 'recovery', or 'when_needed'. "
@@ -220,11 +365,11 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     public static final Field WIRE_FORMAT = Field.create("milvus.wire.format")
             .withDisplayName("Wire format")
-            .withType(Type.STRING)
-            .withDefault("auto")
+            .withEnum(WireFormat.class, WireFormat.AUTO)
             .withWidth(Width.SHORT)
             .withImportance(Importance.LOW)
-            .withDescription("Wire format: 'auto', 'msgpack_batch', or 'proto_single'.");
+            .withDescription("Wire format of the Milvus MQ payloads: 'auto' (probe the pchannel when streaming "
+                    + "starts), 'msgpack_batch', or 'proto_single'. Defaults to 'auto'.");
 
     public static final Field TIMETICK_STALL_TIMEOUT_MS = Field.create("milvus.timetick.stall.timeout.ms")
             .withDisplayName("Timetick stall timeout (ms)")
@@ -236,11 +381,10 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     public static final Field UPSERT_MODE = Field.create("milvus.upsert.mode")
             .withDisplayName("Upsert mode")
-            .withType(Type.STRING)
-            .withDefault("passthrough")
+            .withEnum(UpsertMode.class, UpsertMode.PASSTHROUGH)
             .withWidth(Width.SHORT)
             .withImportance(Importance.LOW)
-            .withDescription("Upsert representation: 'passthrough' or 'correlate'.");
+            .withDescription("Upsert representation: 'passthrough' or 'correlate'. Defaults to 'passthrough'.");
 
     public static final Field SNAPSHOT_BATCH_SIZE = Field.create("milvus.snapshot.batch.size")
             .withDisplayName("Snapshot batch size")
@@ -307,9 +451,9 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
     private final String kafkaKeyDeserializer;
     private final String kafkaValueDeserializer;
     private final int kafkaPartitionIndex;
-    private final String wireFormat;
+    private final WireFormat wireFormat;
     private final long timetickStallTimeoutMs;
-    private final String upsertMode;
+    private final UpsertMode upsertMode;
     private final int snapshotBatchSize;
     private final int maxBufferedEvents;
     private final long maxBufferedBytes;
@@ -338,16 +482,16 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
                 Function.identity());
         this.etcdRootPath = config.getString(ETCD_ROOT_PATH);
         this.etcdCheckpointPath = config.getString(ETCD_CHECKPOINT_PATH);
-        this.snapshotMode = SnapshotMode.parse(config.getString(SNAPSHOT_MODE_FIELD), SnapshotMode.INITIAL);
+        this.snapshotMode = SnapshotMode.parse(config.getString(SNAPSHOT_MODE_FIELD), SNAPSHOT_MODE_FIELD.defaultValueAsString());
         this.kafkaBootstrapServers = config.getString(KAFKA_BOOTSTRAP_SERVERS);
         this.kafkaConsumerGroupId = config.getString(KAFKA_CONSUMER_GROUP_ID);
         this.kafkaMaxPollIntervalMs = config.getInteger(KAFKA_MAX_POLL_INTERVAL_MS);
         this.kafkaKeyDeserializer = config.getString(KAFKA_KEY_DESERIALIZER);
         this.kafkaValueDeserializer = config.getString(KAFKA_VALUE_DESERIALIZER);
         this.kafkaPartitionIndex = config.getInteger(KAFKA_PARTITION_INDEX);
-        this.wireFormat = config.getString(WIRE_FORMAT);
+        this.wireFormat = WireFormat.parse(config.getString(WIRE_FORMAT), WIRE_FORMAT.defaultValueAsString());
         this.timetickStallTimeoutMs = config.getLong(TIMETICK_STALL_TIMEOUT_MS);
-        this.upsertMode = config.getString(UPSERT_MODE);
+        this.upsertMode = UpsertMode.parse(config.getString(UPSERT_MODE), UPSERT_MODE.defaultValueAsString());
         this.snapshotBatchSize = config.getInteger(SNAPSHOT_BATCH_SIZE);
         this.maxBufferedEvents = config.getInteger(BUFFER_MAX_EVENTS);
         this.maxBufferedBytes = config.getLong(BUFFER_MAX_BYTES);
@@ -420,7 +564,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         return kafkaPartitionIndex;
     }
 
-    public String getWireFormat() {
+    public WireFormat getWireFormat() {
         return wireFormat;
     }
 
@@ -428,7 +572,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         return timetickStallTimeoutMs;
     }
 
-    public String getUpsertMode() {
+    public UpsertMode getUpsertMode() {
         return upsertMode;
     }
 

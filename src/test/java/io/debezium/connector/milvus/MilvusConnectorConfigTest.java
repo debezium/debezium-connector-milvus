@@ -18,6 +18,9 @@ import org.apache.kafka.common.config.ConfigDef;
 import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
+import io.debezium.connector.milvus.MilvusConnectorConfig.SnapshotMode;
+import io.debezium.connector.milvus.MilvusConnectorConfig.UpsertMode;
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.doc.FixFor;
 
 public class MilvusConnectorConfigTest {
@@ -52,10 +55,10 @@ public class MilvusConnectorConfigTest {
         assertThat(connectorConfig.isStartupValidationEnabled()).isTrue();
         assertThat(connectorConfig.getEtcdRootPath()).isEqualTo("by-dev");
         assertThat(connectorConfig.getEtcdCheckpointPath()).isNull();
-        assertThat(connectorConfig.getSnapshotMode().getValue()).isEqualTo("initial");
-        assertThat(connectorConfig.getWireFormat()).isEqualTo("auto");
+        assertThat(connectorConfig.getSnapshotMode()).isEqualTo(SnapshotMode.INITIAL);
+        assertThat(connectorConfig.getWireFormat()).isEqualTo(WireFormat.AUTO);
         assertThat(connectorConfig.getTimetickStallTimeoutMs()).isEqualTo(30000L);
-        assertThat(connectorConfig.getUpsertMode()).isEqualTo("passthrough");
+        assertThat(connectorConfig.getUpsertMode()).isEqualTo(UpsertMode.PASSTHROUGH);
     }
 
     @Test
@@ -83,11 +86,42 @@ public class MilvusConnectorConfigTest {
         assertThat(connectorConfig.isStartupValidationEnabled()).isFalse();
         assertThat(connectorConfig.getEtcdRootPath()).isEqualTo("custom-root");
         assertThat(connectorConfig.getEtcdCheckpointPath()).isEqualTo("custom/checkpoint/%s");
-        assertThat(connectorConfig.getSnapshotMode().getValue()).isEqualTo("never");
+        assertThat(connectorConfig.getSnapshotMode()).isEqualTo(SnapshotMode.NEVER);
         assertThat(connectorConfig.getKafkaBootstrapServers()).isEqualTo("kafka:9092");
-        assertThat(connectorConfig.getWireFormat()).isEqualTo("msgpack_batch");
+        assertThat(connectorConfig.getWireFormat()).isEqualTo(WireFormat.MSGPACK_BATCH);
         assertThat(connectorConfig.getTimetickStallTimeoutMs()).isEqualTo(60000L);
-        assertThat(connectorConfig.getUpsertMode()).isEqualTo("correlate");
+        assertThat(connectorConfig.getUpsertMode()).isEqualTo(UpsertMode.CORRELATE);
+    }
+
+    @Test
+    void shouldParseEnumeratedValuesIgnoringCaseAndWhitespace() {
+        Map<String, String> props = new HashMap<>(baseConfig());
+        props.put("snapshot.mode", " When_Needed ");
+        props.put("milvus.wire.format", "Proto_Single");
+        props.put("milvus.upsert.mode", "CORRELATE");
+
+        MilvusConnectorConfig connectorConfig = new MilvusConnectorConfig(Configuration.from(props));
+
+        assertThat(connectorConfig.getSnapshotMode()).isEqualTo(SnapshotMode.WHEN_NEEDED);
+        assertThat(connectorConfig.getWireFormat()).isEqualTo(WireFormat.PROTO_SINGLE);
+        assertThat(connectorConfig.getUpsertMode()).isEqualTo(UpsertMode.CORRELATE);
+    }
+
+    @Test
+    void shouldRejectUnknownEnumeratedValues() {
+        Map<String, String> props = new HashMap<>(baseConfig());
+        props.put("snapshot.mode", "sometimes");
+        props.put("milvus.wire.format", "avro");
+        props.put("milvus.upsert.mode", "merge");
+
+        List<String> problems = new ArrayList<>();
+        boolean valid = Configuration.from(props).validateAndRecord(MilvusConnectorConfig.ALL_FIELDS, problems::add);
+
+        assertThat(valid).isFalse();
+        assertThat(problems)
+                .anySatisfy(problem -> assertThat(problem).contains("snapshot.mode"))
+                .anySatisfy(problem -> assertThat(problem).contains("milvus.wire.format"))
+                .anySatisfy(problem -> assertThat(problem).contains("milvus.upsert.mode"));
     }
 
     @Test

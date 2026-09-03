@@ -18,6 +18,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.milvus.grpc.MsgBase;
 import io.milvus.grpc.MsgType;
 
@@ -40,7 +41,7 @@ public class MilvusChangeEventSourceFactoryTest {
             throw new AssertionError("detector must not be created for an explicit wire format");
         });
 
-        assertThat(factory.resolveWireFormat()).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(factory.resolveWireFormat()).isEqualTo(WireFormat.PROTO_SINGLE);
         assertThat(detectorCreations).hasValue(0);
     }
 
@@ -50,7 +51,7 @@ public class MilvusChangeEventSourceFactoryTest {
         MilvusConnectorConfig config = config("auto");
         MilvusChangeEventSourceFactory factory = factory(config, null, detector(config, consumer));
 
-        assertThat(factory.resolveWireFormat()).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(factory.resolveWireFormat()).isEqualTo(WireFormat.PROTO_SINGLE);
         assertThat(consumer.seekPosition).isEqualTo(SeekPosition.EARLIEST);
         assertThat(consumer.seekOffsets).isNull();
         assertThat(consumer.closed).isTrue();
@@ -65,7 +66,7 @@ public class MilvusChangeEventSourceFactoryTest {
         RecordingConsumer consumer = new RecordingConsumer(List.of(message(protoCreateCollection(), 43L)));
         MilvusChangeEventSourceFactory factory = factory(config, previousOffset, detector(config, consumer));
 
-        assertThat(factory.resolveWireFormat()).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(factory.resolveWireFormat()).isEqualTo(WireFormat.PROTO_SINGLE);
         assertThat(consumer.seekPosition).isNull();
         assertThat(consumer.seekOffsets).containsExactly(Map.entry(new TopicPartition(TOPIC, 0), 42L));
     }
@@ -80,8 +81,8 @@ public class MilvusChangeEventSourceFactoryTest {
                     () -> new RecordingConsumer(List.of(message(protoCreateCollection(), 1L))));
         });
 
-        assertThat(factory.resolveWireFormat()).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
-        assertThat(factory.resolveWireFormat()).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(factory.resolveWireFormat()).isEqualTo(WireFormat.PROTO_SINGLE);
+        assertThat(factory.resolveWireFormat()).isEqualTo(WireFormat.PROTO_SINGLE);
         assertThat(detectorCreations).hasValue(1);
     }
 

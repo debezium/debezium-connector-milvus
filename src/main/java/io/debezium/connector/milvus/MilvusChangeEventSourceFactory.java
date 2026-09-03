@@ -13,6 +13,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
 import io.debezium.pipeline.EventDispatcher;
@@ -37,15 +38,15 @@ import io.debezium.relational.TableId;
  * <p>The MQ wire format handed to the deserializer is resolved once, when the
  * streaming source is first built. An explicit {@code milvus.wire.format} is
  * used as-is; {@code auto} (the default) runs {@link MilvusWireFormatDetector}
- * against the configured pchannel. On a warm restart the probe starts from the
- * stored MQ offset so it inspects the messages that will actually be processed
- * next rather than potentially pre-upgrade payloads at the head of the topic.</p>
+ * against the configured pchannel. On a warm restart the probe seeks to the
+ * stored MQ offset, so the first message it inspects is the last one already
+ * processed (streaming itself resumes one past it). That message is guaranteed
+ * to reflect the format in use, unlike potentially pre-upgrade payloads at the
+ * head of the topic.</p>
  */
 public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<MilvusPartition, MilvusOffsetContext> {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MilvusChangeEventSourceFactory.class);
-
-    static final String WIRE_FORMAT_AUTO = "auto";
 
     private final MilvusConnectorConfig connectorConfig;
     private final EventDispatcher<MilvusPartition, TableId> dispatcher;
@@ -57,7 +58,7 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
     private final MilvusOffsetContext previousOffset;
     private final Supplier<MilvusWireFormatDetector> detectorSupplier;
 
-    private String resolvedWireFormat;
+    private WireFormat resolvedWireFormat;
 
     public MilvusChangeEventSourceFactory(MilvusConnectorConfig connectorConfig,
                                           EventDispatcher<MilvusPartition, TableId> dispatcher,
@@ -123,20 +124,22 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
      *
      * <p>An explicit {@code milvus.wire.format} value wins without any probing.
      * With {@code auto}, the configured pchannel is probed by
-     * {@link MilvusWireFormatDetector}; the probe starts from the stored MQ
-     * offset when one exists (warm restart) and from the earliest available
-     * message otherwise. The result is cached for the lifetime of the factory.</p>
+     * {@link MilvusWireFormatDetector}; the probe seeks to the stored MQ offset
+     * when one exists (warm restart), i.e. to the last already-processed
+     * message, and to the earliest available message otherwise. The result is
+     * cached for the lifetime of the factory.</p>
+     *
+     * @return the resolved format, never {@link WireFormat#AUTO}
      */
-    synchronized String resolveWireFormat() {
+    synchronized WireFormat resolveWireFormat() {
         if (resolvedWireFormat != null) {
             return resolvedWireFormat;
         }
 
-        String configured = connectorConfig.getWireFormat();
-        String normalized = configured == null ? WIRE_FORMAT_AUTO : configured.trim().toLowerCase();
-        if (!WIRE_FORMAT_AUTO.equals(normalized)) {
-            LOGGER.info("Using explicitly configured Milvus wire format '{}'", normalized);
-            resolvedWireFormat = normalized;
+        WireFormat configured = connectorConfig.getWireFormat();
+        if (configured != WireFormat.AUTO) {
+            LOGGER.info("Using explicitly configured Milvus wire format '{}'", configured.getValue());
+            resolvedWireFormat = configured;
             return resolvedWireFormat;
         }
 
@@ -145,7 +148,7 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
         LOGGER.info("Probing pchannel '{}' to detect the Milvus wire format, starting from {}",
                 pchannel, storedOffsets.isEmpty() ? "the earliest available message" : "stored offsets " + storedOffsets);
         resolvedWireFormat = detectorSupplier.get().detect(Set.of(pchannel), storedOffsets);
-        LOGGER.info("Detected Milvus wire format '{}' on pchannel '{}'", resolvedWireFormat, pchannel);
+        LOGGER.info("Detected Milvus wire format '{}' on pchannel '{}'", resolvedWireFormat.getValue(), pchannel);
         return resolvedWireFormat;
     }
 
