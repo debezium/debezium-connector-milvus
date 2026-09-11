@@ -67,13 +67,121 @@
         </repository>
     </repositories>
 
-    <!--
-        Override the Debezium BOM's grpc version (1.56.1) with 1.59.1.
-        MilvusClientV2 requires io.grpc.ForwardingChannelBuilder2 which was
-        introduced in gRPC 1.59.0 and is absent from 1.56.1.
-    -->
+    <!-- Managing versions here to ensure the right ones are applied during releases -->
     <dependencyManagement>
         <dependencies>
+            <!-- Debezium artifacts -->
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-connector-common</artifactId>
+                <version>${version.debezium}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-config</artifactId>
+                <version>${version.debezium}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-storage-kafka</artifactId>
+                <version>${version.debezium}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-storage-file</artifactId>
+                <version>${version.debezium}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-connect-plugins</artifactId>
+                <version>${version.debezium}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-embedded</artifactId>
+                <version>${version.debezium}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-util</artifactId>
+                <version>${version.debezium}</version>
+            </dependency>
+
+            <!-- Building -->
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-ide-configs</artifactId>
+                <version>${version.debezium}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-checkstyle</artifactId>
+                <version>${version.debezium}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-assembly-descriptors</artifactId>
+                <version>${version.debezium}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-revapi</artifactId>
+                <version>${version.debezium}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- Testing -->
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-connector-common</artifactId>
+                <version>${version.debezium}</version>
+                <type>test-jar</type>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-embedded</artifactId>
+                <version>${version.debezium}</version>
+                <type>test-jar</type>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.debezium</groupId>
+                <artifactId>debezium-util</artifactId>
+                <version>${version.debezium}</version>
+                <type>test-jar</type>
+                <scope>test</scope>
+            </dependency>
+
+            <!-- Milvus SDK -->
+            <dependency>
+                <groupId>io.milvus</groupId>
+                <artifactId>milvus-sdk-java</artifactId>
+                <version>${version.milvus.sdk}</version>
+            </dependency>
+
+            <!-- MessagePack -->
+            <dependency>
+                <groupId>org.msgpack</groupId>
+                <artifactId>msgpack-core</artifactId>
+                <version>${version.msgpack}</version>
+            </dependency>
+
+            <!-- jetcd -->
+            <dependency>
+                <groupId>io.etcd</groupId>
+                <artifactId>jetcd-core</artifactId>
+                <version>${version.jetcd}</version>
+            </dependency>
+
+            <!--
+                Override the Debezium BOM's grpc version (1.56.1) with 1.59.1.
+                MilvusClientV2 requires io.grpc.ForwardingChannelBuilder2 which was
+                introduced in gRPC 1.59.0 and is absent from 1.56.1.
+            -->
             <dependency>
                 <groupId>io.grpc</groupId>
                 <artifactId>grpc-api</artifactId>
@@ -163,13 +271,11 @@
         <dependency>
             <groupId>io.milvus</groupId>
             <artifactId>milvus-sdk-java</artifactId>
-            <version>${version.milvus.sdk}</version>
         </dependency>
 
         <dependency>
             <groupId>org.msgpack</groupId>
             <artifactId>msgpack-core</artifactId>
-            <version>${version.msgpack}</version>
         </dependency>
 
         <!--
@@ -180,7 +286,6 @@
         <dependency>
             <groupId>io.etcd</groupId>
             <artifactId>jetcd-core</artifactId>
-            <version>${version.jetcd}</version>
         </dependency>
 
         <dependency>
@@ -510,7 +615,6 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-assembly-plugin</artifactId>
-                        <version>${version.assembly.plugin}</version>
                         <dependencies>
                             <dependency>
                                 <groupId>io.debezium</groupId>
@@ -539,7 +643,6 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
-                        <version>${version.failsafe.plugin}</version>
                         <configuration>
                             <systemPropertyVariables>
                                 <isAssemblyProfileActive>true</isAssemblyProfileActive>
