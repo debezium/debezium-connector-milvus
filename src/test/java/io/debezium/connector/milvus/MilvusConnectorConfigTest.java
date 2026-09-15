@@ -94,6 +94,7 @@ public class MilvusConnectorConfigTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldParseEnumeratedValuesIgnoringCaseAndWhitespace() {
         Map<String, String> props = new HashMap<>(baseConfig());
         props.put("snapshot.mode", " When_Needed ");
@@ -108,6 +109,7 @@ public class MilvusConnectorConfigTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldRejectUnknownEnumeratedValues() {
         Map<String, String> props = new HashMap<>(baseConfig());
         props.put("snapshot.mode", "sometimes");
