@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
 import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
+import io.debezium.doc.FixFor;
 import io.milvus.grpc.MsgBase;
 import io.milvus.grpc.MsgType;
 
@@ -34,6 +35,7 @@ public class MilvusChangeEventSourceFactoryTest {
     private static final String TOPIC = "by-dev-rootcoord-dml_0";
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldUseExplicitWireFormatWithoutProbing() {
         AtomicInteger detectorCreations = new AtomicInteger();
         MilvusChangeEventSourceFactory factory = factory("proto_single", null, () -> {
@@ -46,6 +48,7 @@ public class MilvusChangeEventSourceFactoryTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldProbeFromEarliestWhenAutoAndNoStoredOffset() {
         RecordingConsumer consumer = new RecordingConsumer(List.of(message(protoCreateCollection(), 5L)));
         MilvusConnectorConfig config = config("auto");
@@ -58,6 +61,7 @@ public class MilvusChangeEventSourceFactoryTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldProbeFromStoredOffsetOnWarmRestart() {
         MilvusConnectorConfig config = config("auto");
         MilvusOffsetContext previousOffset = new MilvusOffsetContext(new MilvusSourceInfo(config));
@@ -72,6 +76,7 @@ public class MilvusChangeEventSourceFactoryTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldCacheResolvedWireFormat() {
         MilvusConnectorConfig config = config("auto");
         AtomicInteger detectorCreations = new AtomicInteger();
