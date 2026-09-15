@@ -118,14 +118,12 @@ public class MilvusWireFormatDetector {
                 if (channelFormat == null) {
                     continue;
                 }
-                if (detected == null) {
-                    detected = channelFormat;
-                }
-                else if (detected != channelFormat) {
+                if (detected != null && detected != channelFormat) {
                     throw new MilvusWireFormatMismatchException(
                             detected.getValue(), channelFormat.getValue(), pchannel, config.getKafkaPartitionIndex(),
                             -1L, "Mixed wire formats detected across pchannels");
                 }
+                detected = channelFormat;
             }
 
             if (detected == null) {

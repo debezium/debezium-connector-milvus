@@ -130,6 +130,7 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldSkipUnrecognizablePayloadWhenRecognizableMessageFollows() {
         MilvusWireFormatDetector detector = detector("auto", List.of(
                 message(new byte[0], 0L),
@@ -153,6 +154,7 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldReprobeFromEarliestWhenStoredOffsetYieldsOnlyTimeTicks() {
         FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
                 Map.of(TOPIC, List.of(message(protoCreate().toByteArray(), 1L))),
@@ -166,6 +168,7 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldReprobeFromEarliestWhenStoredOffsetYieldsOnlyUnrecognizablePayloads() {
         FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
                 Map.of(TOPIC, List.of(message(protoCreate().toByteArray(), 1L))),
@@ -181,6 +184,7 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldReportUnrecognizablePayloadAfterStoredOffsetWhenReprobeAlsoFindsNothingRecognizable() {
         FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
                 Map.of(TOPIC, List.of(message(new byte[]{ 0x11, 0x22 }, 1L))),
@@ -196,6 +200,7 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldReportUnrecognizablePayloadFromReprobeWhenStoredOffsetYieldsOnlyTimeTicks() {
         FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
                 Map.of(TOPIC, List.of(message(new byte[]{ 0x11, 0x22 }, 1L))),
@@ -209,6 +214,7 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
     void shouldReturnDefaultWhenStoredOffsetAndReprobeYieldOnlyTimeTicks() throws Exception {
         FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
                 Map.of(TOPIC, List.of(message(msgpackTimeTickBatch(), 1L))),
