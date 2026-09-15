@@ -458,7 +458,7 @@
                         </image>
 
                         <image>
-                            <name>minio/minio:RELEASE.2023-03-20T20-16-18Z</name>
+                            <name>quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z</name>
                             <alias>minio</alias>
                             <run>
                                 <network>
