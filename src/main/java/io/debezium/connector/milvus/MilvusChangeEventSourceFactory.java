@@ -5,6 +5,15 @@
  */
 package io.debezium.connector.milvus;
 
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Supplier;
+
+import org.apache.kafka.common.TopicPartition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
 import io.debezium.pipeline.EventDispatcher;
@@ -25,8 +34,19 @@ import io.debezium.relational.TableId;
  * <p>Passes the shared {@link EtcdCheckpointReader} to both the snapshot
  * source (for reading {@code guarantee_ts}) and the streaming source (for
  * resolving the Kafka offset for snapshot-to-streaming handoff).</p>
+ *
+ * <p>The MQ wire format handed to the deserializer is resolved once, when the
+ * streaming source is first built. An explicit {@code milvus.wire.format} is
+ * used as-is; {@code auto} (the default) runs {@link MilvusWireFormatDetector}
+ * against the configured pchannel. On a warm restart the probe seeks to the
+ * stored MQ offset, so the first message it inspects is the last one already
+ * processed (streaming itself resumes one past it). That message is guaranteed
+ * to reflect the format in use, unlike potentially pre-upgrade payloads at the
+ * head of the topic.</p>
  */
 public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<MilvusPartition, MilvusOffsetContext> {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(MilvusChangeEventSourceFactory.class);
 
     private final MilvusConnectorConfig connectorConfig;
     private final EventDispatcher<MilvusPartition, TableId> dispatcher;
@@ -35,6 +55,10 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
     private final MilvusSnapshotQueryClient snapshotQueryClient;
     private final MilvusMetadataClient metadataClient;
     private final MilvusStreamingChangeEventSourceMetrics streamingMetrics;
+    private final MilvusOffsetContext previousOffset;
+    private final Supplier<MilvusWireFormatDetector> detectorSupplier;
+
+    private WireFormat resolvedWireFormat;
 
     public MilvusChangeEventSourceFactory(MilvusConnectorConfig connectorConfig,
                                           EventDispatcher<MilvusPartition, TableId> dispatcher,
@@ -42,7 +66,21 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
                                           EtcdCheckpointReader checkpointReader,
                                           MilvusSnapshotQueryClient snapshotQueryClient,
                                           MilvusMetadataClient metadataClient,
-                                          MilvusStreamingChangeEventSourceMetrics streamingMetrics) {
+                                          MilvusStreamingChangeEventSourceMetrics streamingMetrics,
+                                          MilvusOffsetContext previousOffset) {
+        this(connectorConfig, dispatcher, schema, checkpointReader, snapshotQueryClient, metadataClient,
+                streamingMetrics, previousOffset, () -> new MilvusWireFormatDetector(connectorConfig));
+    }
+
+    MilvusChangeEventSourceFactory(MilvusConnectorConfig connectorConfig,
+                                   EventDispatcher<MilvusPartition, TableId> dispatcher,
+                                   MilvusDatabaseSchema schema,
+                                   EtcdCheckpointReader checkpointReader,
+                                   MilvusSnapshotQueryClient snapshotQueryClient,
+                                   MilvusMetadataClient metadataClient,
+                                   MilvusStreamingChangeEventSourceMetrics streamingMetrics,
+                                   MilvusOffsetContext previousOffset,
+                                   Supplier<MilvusWireFormatDetector> detectorSupplier) {
         this.connectorConfig = connectorConfig;
         this.dispatcher = dispatcher;
         this.schema = schema;
@@ -50,6 +88,8 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
         this.snapshotQueryClient = snapshotQueryClient;
         this.metadataClient = metadataClient;
         this.streamingMetrics = streamingMetrics;
+        this.previousOffset = previousOffset;
+        this.detectorSupplier = detectorSupplier;
     }
 
     @Override
@@ -72,10 +112,54 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
         MilvusMessageConsumer messageConsumer = new KafkaMilvusMessageConsumer(connectorConfig);
         MilvusValueConverter valueConverter = new MilvusValueConverter(connectorConfig);
         MilvusColumnarPivot pivot = new MilvusColumnarPivot(valueConverter);
-        MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(connectorConfig.getWireFormat(), pivot);
+        MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(resolveWireFormat(), pivot);
         TimetickOrderingEngine orderingEngine = new TimetickOrderingEngine(connectorConfig);
         return new MilvusStreamingChangeEventSource(
                 connectorConfig, messageConsumer, deserializer, orderingEngine,
                 dispatcher, schema, checkpointReader, streamingMetrics);
+    }
+
+    /**
+     * Returns the wire format the deserializer must use.
+     *
+     * <p>An explicit {@code milvus.wire.format} value wins without any probing.
+     * With {@code auto}, the configured pchannel is probed by
+     * {@link MilvusWireFormatDetector}; the probe seeks to the stored MQ offset
+     * when one exists (warm restart), i.e. to the last already-processed
+     * message, and to the earliest available message otherwise. The result is
+     * cached for the lifetime of the factory.</p>
+     *
+     * @return the resolved format, never {@link WireFormat#AUTO}
+     */
+    synchronized WireFormat resolveWireFormat() {
+        if (resolvedWireFormat != null) {
+            return resolvedWireFormat;
+        }
+
+        WireFormat configured = connectorConfig.getWireFormat();
+        if (configured != WireFormat.AUTO) {
+            LOGGER.info("Using explicitly configured Milvus wire format '{}'", configured.getValue());
+            resolvedWireFormat = configured;
+            return resolvedWireFormat;
+        }
+
+        String pchannel = connectorConfig.getPchannelName();
+        Map<TopicPartition, Long> storedOffsets = storedMqOffsets(pchannel);
+        LOGGER.info("Probing pchannel '{}' to detect the Milvus wire format, starting from {}",
+                pchannel, storedOffsets.isEmpty() ? "the earliest available message" : "stored offsets " + storedOffsets);
+        resolvedWireFormat = detectorSupplier.get().detect(Set.of(pchannel), storedOffsets);
+        LOGGER.info("Detected Milvus wire format '{}' on pchannel '{}'", resolvedWireFormat.getValue(), pchannel);
+        return resolvedWireFormat;
+    }
+
+    private Map<TopicPartition, Long> storedMqOffsets(String pchannel) {
+        if (previousOffset == null) {
+            return Map.of();
+        }
+        Long offset = previousOffset.getMqOffset(pchannel);
+        if (offset == null) {
+            return Map.of();
+        }
+        return Map.of(new TopicPartition(pchannel, connectorConfig.getKafkaPartitionIndex()), offset);
     }
 }

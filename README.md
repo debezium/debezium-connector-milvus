@@ -20,8 +20,8 @@ E.g. the format of emitted messages may change, specific features may not be imp
 ## Supported features
 
 - Captures row-level inserts and deletes from Milvus collections and emits them as Debezium change events.
-- Performs a consistent initial snapshot of existing collection data, anchored to the etcd channel checkpoint so that no change is lost or duplicated at the snapshot-to-streaming handoff.
-- Streams changes from the Milvus physical channel (pchannel) on the Milvus message queue backend, with support for both the msgpack batch and single protobuf message wire formats (auto-detected by default).
+- Performs an initial snapshot of existing collection data at `Strong` consistency, anchored to the etcd channel checkpoint so that streaming resumes from the MQ offset the checkpoint records. The handoff is at-least-once: writes that land between the checkpoint and the snapshot query can be emitted both as snapshot (`op=r`) and streaming (`op=c`/`op=d`) events.
+- Streams changes from the Milvus physical channel (pchannel) on the Milvus message queue backend, with support for both the msgpack batch and single protobuf message wire formats. The format is auto-detected by default by probing the pchannel when streaming starts from the stored offset on restart, re-probing from the earliest message if nothing recognizable follows it; set `milvus.wire.format` explicitly to skip the probe. If the probe finds no data messages, the connector falls back to `msgpack_batch` and logs a warning.
 - Re-orders events across virtual channels (vchannels) into strict Milvus TSO order using the timetick watermark protocol, so downstream consumers observe changes in the same order Milvus committed them.
 - Infers collection schemas dynamically, from the first insert event when streaming and from the Milvus metadata API during the snapshot, so collections do not need to be declared up front.
 - Maps Milvus vector types to Debezium logical types, including `io.debezium.data.vector.FloatVector` for float vectors and `io.debezium.data.Json` for JSON and geometry fields.
@@ -37,7 +37,7 @@ Milvus does not expose a change stream over its gRPC API. Instead, Milvus publis
 2. **etcd.** Milvus stores the per-channel checkpoint (its `guarantee_ts` TSO and the corresponding MQ offset) in etcd. The connector reads it to anchor the snapshot and to resume streaming at the offset the checkpoint records. The Milvus API does not expose checkpoint data, so the connector needs direct etcd access.
 3. **The Milvus gRPC API.** The connector uses it during the snapshot to list collections, read their schemas, and query rows, and during streaming to resolve the schema of a collection it has not yet seen in an insert event.
 
-The task runs the standard Debezium pipeline. During the snapshot phase it reads the etcd checkpoint, queries every included collection with `consistency_level=Strong` and `guarantee_ts` pinned to the checkpoint TSO, and emits each row as an `op=r` event. It then records `snapshot_completed=true` and hands off to streaming, which seeks the MQ consumer to the checkpoint offset.
+The task runs the standard Debezium pipeline. During the snapshot phase it reads the etcd checkpoint, queries every included collection with `consistency_level=Strong`, and emits each row as an `op=r` event. The checkpoint `guarantee_ts` value is recorded for traceability but is not applied to the query: the Milvus SDK manages `guarantee_ts` internally, so the snapshot reflects the collection state at query time, which is later than the checkpoint TSO. The task then records `snapshot_completed=true` and hands off to streaming, which seeks the MQ consumer to the checkpoint offset. Changes written between the checkpoint and the snapshot query can therefore appear in both phases; downstream consumers should treat the stream as at-least-once and de-duplicate by primary key.
 
 While streaming, the connector deserializes each raw MQ message and buffers it in the timetick ordering engine. Milvus multiplexes several vchannels onto one pchannel, and each vchannel advances its own timetick. The engine holds an event until the global watermark, which is the minimum timetick across all vchannels, passes that event's TSO. At that point no vchannel can still produce anything older, so the engine releases the event in strict TSO order. The connector dispatches released events through the Debezium `EventDispatcher` and only then advances the offset, so it never commits an offset for an event it has not emitted. If a vchannel stops advancing its timetick for longer than `milvus.timetick.stall.timeout.ms`, the engine force-flushes what it has buffered rather than stalling indefinitely.
 
@@ -107,11 +107,15 @@ An *integration test* is a JUnit test class named `*IT.java` or `IT*.java` that 
 
 If you are trying to get the test methods in a single integration test class to pass and would rather not run *all* of the integration tests, you can instruct Maven to just run that one integration test class and to skip all of the others. For example, use the following command to run the tests in the `MilvusStreamingPipelineIT.java` class:
 
-    $ mvn -Dit.test=MilvusStreamingPipelineIT install
+```
+$ mvn -Dit.test=MilvusStreamingPipelineIT install
+```
 
 Of course, wildcards also work:
 
-    $ mvn -Dit.test=MilvusStreaming*IT install
+```
+$ mvn -Dit.test=MilvusStreaming*IT install
+```
 
 These commands will automatically manage the Docker containers.
 
@@ -119,36 +123,48 @@ These commands will automatically manage the Docker containers.
 
 If you want to debug integration tests by stepping through them in your IDE, using the `mvn install` command will be problematic since it will not wait for your IDE's breakpoints. It is typically far easier to simply start the containers and leave them running so that they are available when you run the integration test(s). The following command:
 
-    $ mvn docker:start
+```
+$ mvn docker:start
+```
 
 will start etcd, MinIO, Kafka, and Milvus. Now you can use your IDE to run/debug one or more integration tests. Be sure to run the tests with VM arguments that define the required system properties, including:
 
-* `milvus.uri` - the Milvus gRPC endpoint; defaults to `http://localhost:19530`, which is what this module's containers expose
-* `kafka.bootstrap.servers` - the Kafka cluster Milvus publishes its MQ channels to; defaults to `localhost:9092`
+- `milvus.uri` - the Milvus gRPC endpoint; defaults to `http://localhost:19530`, which is what this module's containers expose
+- `kafka.bootstrap.servers` - the Kafka cluster Milvus publishes its MQ channels to; defaults to `localhost:9092`
 
 For example, you can define these properties by passing these arguments to the JVM:
 
-    -Dmilvus.uri=http://localhost:19530 -Dkafka.bootstrap.servers=localhost:9092
+```
+-Dmilvus.uri=http://localhost:19530 -Dkafka.bootstrap.servers=localhost:9092
+```
 
 When you are finished running the integration tests from your IDE, you have to stop and remove the containers before you can run the next build:
 
-    $ mvn docker:stop
+```
+$ mvn docker:stop
+```
 
 ### Analyzing the database
 
 Sometimes you may want to inspect the state of Milvus after one or more integration tests are run. The `mvn install` command runs the tests but shuts down and removes the containers after the integration tests complete. To keep them running after the integration tests complete, use this Maven command:
 
-    $ mvn integration-test
+```
+$ mvn integration-test
+```
 
 This instructs Maven to run the normal Maven lifecycle through `integration-test`, and to stop before the `post-integration-test` phase when the containers are normally shut down and removed. Be aware that you will need to manually stop and remove the containers before running the build again:
 
-    $ mvn docker:stop
+```
+$ mvn docker:stop
+```
 
 ### Skipping the containers entirely
 
 If you only want to run the unit tests, or you are running against a Milvus cluster you manage yourself, you can disable the container lifecycle:
 
-    $ mvn install -Ddocker.skip=true -DskipITs
+```
+$ mvn install -Ddocker.skip=true -DskipITs
+```
 
 ## Contributing
 
@@ -158,7 +174,9 @@ The Debezium community welcomes anyone that wants to help out in any way, whethe
 
 You can skip all non-essential plug-ins (tests, integration tests, CheckStyle, formatter, API compatibility check, etc.) using the "quick" build profile:
 
-    $ mvn clean verify -Dquick
+```
+$ mvn clean verify -Dquick
+```
 
 This provides the fastest way for solely producing the output artifacts, without running any of the QA related Maven plug-ins.
 This comes in handy for producing connector JARs and/or archives as quickly as possible, e.g. for manual testing in Kafka Connect.

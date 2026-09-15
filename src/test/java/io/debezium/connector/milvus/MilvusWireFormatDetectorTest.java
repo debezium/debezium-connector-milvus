@@ -19,6 +19,7 @@ import org.msgpack.core.MessageBufferPacker;
 import org.msgpack.core.MessagePack;
 
 import io.debezium.config.Configuration;
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.doc.FixFor;
 import io.milvus.grpc.FloatArray;
 import io.milvus.grpc.MsgBase;
@@ -40,7 +41,7 @@ public class MilvusWireFormatDetectorTest {
     void shouldDetectMsgPackBatchFromValidInsertRequest() throws Exception {
         MilvusWireFormatDetector detector = detector("auto", List.of(message(msgpackInsertBatch(), 1L)));
 
-        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH);
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.MSGPACK_BATCH);
     }
 
     @Test
@@ -55,7 +56,7 @@ public class MilvusWireFormatDetectorTest {
 
         MilvusWireFormatDetector detector = detector("auto", List.of(message(insert.toByteArray(), 1L)));
 
-        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.PROTO_SINGLE);
     }
 
     @Test
@@ -63,7 +64,7 @@ public class MilvusWireFormatDetectorTest {
     void shouldDetectMsgPackBatchFromDeleteRequest() throws Exception {
         MilvusWireFormatDetector detector = detector("auto", List.of(message(msgpackDeleteBatch(), 2L)));
 
-        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH);
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.MSGPACK_BATCH);
     }
 
     @Test
@@ -77,7 +78,7 @@ public class MilvusWireFormatDetectorTest {
 
         MilvusWireFormatDetector detector = detector("auto", List.of(message(delete.toByteArray(), 2L)));
 
-        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.PROTO_SINGLE);
     }
 
     @Test
@@ -88,7 +89,7 @@ public class MilvusWireFormatDetectorTest {
                 message(protoTimeTick().toByteArray(), 2L),
                 message(protoCreate().toByteArray(), 3L)));
 
-        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.PROTO_SINGLE);
     }
 
     @Test
@@ -96,7 +97,7 @@ public class MilvusWireFormatDetectorTest {
     void shouldFallbackToConfiguredFormatOnEmptyTopic() {
         MilvusWireFormatDetector detector = detector("proto_single", List.of());
 
-        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_PROTO_SINGLE);
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.PROTO_SINGLE);
     }
 
     @Test
@@ -104,7 +105,7 @@ public class MilvusWireFormatDetectorTest {
     void shouldDefaultToMsgPackBatchWhenAutoAndEmptyTopic() {
         MilvusWireFormatDetector detector = detector("auto", List.of());
 
-        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(MilvusProtoDeserializer.FORMAT_MSGPACK_BATCH);
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.MSGPACK_BATCH);
     }
 
     @Test
@@ -129,6 +130,17 @@ public class MilvusWireFormatDetectorTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2530")
+    void shouldSkipUnrecognizablePayloadWhenRecognizableMessageFollows() {
+        MilvusWireFormatDetector detector = detector("auto", List.of(
+                message(new byte[0], 0L),
+                message(new byte[]{ 0x55, 0x66 }, 1L),
+                message(protoCreate().toByteArray(), 2L)));
+
+        assertThat(detector.detect(Set.of(TOPIC))).isEqualTo(WireFormat.PROTO_SINGLE);
+    }
+
+    @Test
     @FixFor("debezium/dbz#2124")
     void shouldRejectMixedFormatsAcrossChannels() throws Exception {
         FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(Map.of(
@@ -139,6 +151,80 @@ public class MilvusWireFormatDetectorTest {
         assertThatThrownBy(() -> detector.detect(Set.of(TOPIC, "by-dev-rootcoord-dml_1")))
                 .isInstanceOf(MilvusWireFormatMismatchException.class)
                 .hasMessageContaining("Mixed wire formats detected");
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2530")
+    void shouldReprobeFromEarliestWhenStoredOffsetYieldsOnlyTimeTicks() {
+        FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
+                Map.of(TOPIC, List.of(message(protoCreate().toByteArray(), 1L))),
+                Map.of(TOPIC, List.of(message(protoTimeTick().toByteArray(), 42L))));
+        MilvusWireFormatDetector detector = detector("auto", consumer);
+
+        assertThat(detector.detect(Set.of(TOPIC), Map.of(new TopicPartition(TOPIC, 0), 42L)))
+                .isEqualTo(WireFormat.PROTO_SINGLE);
+        assertThat(consumer.storedOffsetProbes).isEqualTo(1);
+        assertThat(consumer.earliestProbes).isEqualTo(1);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2530")
+    void shouldReprobeFromEarliestWhenStoredOffsetYieldsOnlyUnrecognizablePayloads() {
+        FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
+                Map.of(TOPIC, List.of(message(protoCreate().toByteArray(), 1L))),
+                Map.of(TOPIC, List.of(
+                        message(protoTimeTick().toByteArray(), 42L),
+                        message(new byte[]{ 0x55, 0x66 }, 43L))));
+        MilvusWireFormatDetector detector = detector("auto", consumer);
+
+        assertThat(detector.detect(Set.of(TOPIC), Map.of(new TopicPartition(TOPIC, 0), 42L)))
+                .isEqualTo(WireFormat.PROTO_SINGLE);
+        assertThat(consumer.storedOffsetProbes).isEqualTo(1);
+        assertThat(consumer.earliestProbes).isEqualTo(1);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2530")
+    void shouldReportUnrecognizablePayloadAfterStoredOffsetWhenReprobeAlsoFindsNothingRecognizable() {
+        FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
+                Map.of(TOPIC, List.of(message(new byte[]{ 0x11, 0x22 }, 1L))),
+                Map.of(TOPIC, List.of(message(new byte[]{ 0x55, 0x66 }, 43L))));
+        MilvusWireFormatDetector detector = detector("auto", consumer);
+
+        assertThatThrownBy(() -> detector.detect(Set.of(TOPIC), Map.of(new TopicPartition(TOPIC, 0), 42L)))
+                .isInstanceOf(MilvusWireFormatMismatchException.class)
+                .hasMessageContaining("Unrecognizable payload")
+                .hasMessageContaining("offset=43");
+        assertThat(consumer.storedOffsetProbes).isEqualTo(1);
+        assertThat(consumer.earliestProbes).isEqualTo(1);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2530")
+    void shouldReportUnrecognizablePayloadFromReprobeWhenStoredOffsetYieldsOnlyTimeTicks() {
+        FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
+                Map.of(TOPIC, List.of(message(new byte[]{ 0x11, 0x22 }, 1L))),
+                Map.of(TOPIC, List.of(message(protoTimeTick().toByteArray(), 42L))));
+        MilvusWireFormatDetector detector = detector("auto", consumer);
+
+        assertThatThrownBy(() -> detector.detect(Set.of(TOPIC), Map.of(new TopicPartition(TOPIC, 0), 42L)))
+                .isInstanceOf(MilvusWireFormatMismatchException.class)
+                .hasMessageContaining("Unrecognizable payload")
+                .hasMessageContaining("offset=1");
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2530")
+    void shouldReturnDefaultWhenStoredOffsetAndReprobeYieldOnlyTimeTicks() throws Exception {
+        FakeMilvusMessageConsumer consumer = new FakeMilvusMessageConsumer(
+                Map.of(TOPIC, List.of(message(msgpackTimeTickBatch(), 1L))),
+                Map.of(TOPIC, List.of(message(protoTimeTick().toByteArray(), 42L))));
+        MilvusWireFormatDetector detector = detector("auto", consumer);
+
+        assertThat(detector.detect(Set.of(TOPIC), Map.of(new TopicPartition(TOPIC, 0), 42L)))
+                .isEqualTo(WireFormat.MSGPACK_BATCH);
+        assertThat(consumer.storedOffsetProbes).isEqualTo(1);
+        assertThat(consumer.earliestProbes).isEqualTo(1);
     }
 
     private static MilvusWireFormatDetector detector(String configuredWireFormat,
@@ -248,22 +334,38 @@ public class MilvusWireFormatDetectorTest {
 
     private static final class FakeMilvusMessageConsumer implements MilvusMessageConsumer {
         private final Map<String, List<RawMilvusMessage>> messagesByTopic;
+        private final Map<String, List<RawMilvusMessage>> messagesAfterStoredOffset;
         private String currentPchannel;
         private boolean delivered;
+        private boolean seekedToStoredOffset;
+        private int storedOffsetProbes;
+        private int earliestProbes;
 
         private FakeMilvusMessageConsumer(Map<String, List<RawMilvusMessage>> messagesByTopic) {
+            this(messagesByTopic, Map.of());
+        }
+
+        private FakeMilvusMessageConsumer(Map<String, List<RawMilvusMessage>> messagesByTopic,
+                                          Map<String, List<RawMilvusMessage>> messagesAfterStoredOffset) {
             this.messagesByTopic = messagesByTopic;
+            this.messagesAfterStoredOffset = messagesAfterStoredOffset;
         }
 
         @Override
         public void assignAndSeek(Map<TopicPartition, Long> offsets) {
+            this.currentPchannel = offsets.keySet().iterator().next().topic();
+            this.seekedToStoredOffset = true;
+            this.delivered = false;
+            this.storedOffsetProbes++;
         }
 
         @Override
         public void assignAndSeek(Set<String> pchannels, SeekPosition position,
                                   Map<TopicPartition, Long> storedOffsets) {
             this.currentPchannel = pchannels.iterator().next();
+            this.seekedToStoredOffset = false;
             this.delivered = false;
+            this.earliestProbes++;
         }
 
         @Override
@@ -272,7 +374,8 @@ public class MilvusWireFormatDetectorTest {
                 return List.of();
             }
             delivered = true;
-            return messagesByTopic.getOrDefault(currentPchannel, List.of());
+            Map<String, List<RawMilvusMessage>> source = seekedToStoredOffset ? messagesAfterStoredOffset : messagesByTopic;
+            return source.getOrDefault(currentPchannel, List.of());
         }
 
         @Override

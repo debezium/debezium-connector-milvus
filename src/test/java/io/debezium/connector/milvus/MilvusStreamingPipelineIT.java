@@ -31,12 +31,14 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
 import io.debezium.config.Configuration;
+import io.debezium.connector.milvus.MilvusConnectorConfig.WireFormat;
 import io.debezium.connector.milvus.util.MilvusTestContainer;
 import io.debezium.connector.milvus.util.TestHelper;
 import io.debezium.data.Json;
 import io.debezium.data.vector.FloatVector;
 import io.debezium.embedded.async.AbstractAsyncEngineConnectorTest;
 import io.debezium.embedded.util.MetricsHelper;
+import io.debezium.junit.logging.LogInterceptor;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.DataType;
 import io.milvus.v2.service.collection.request.CreateCollectionReq;
@@ -169,8 +171,14 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
     private Configuration connectorConfig() {
         return TestHelper.defaultConfig(bootstrap).edit()
                 .with(MilvusConnectorConfig.PCHANNEL_NAME, PCHANNEL)
-                .with(MilvusConnectorConfig.WIRE_FORMAT, MilvusProtoDeserializer.FORMAT_PROTO_SINGLE)
+                .with(MilvusConnectorConfig.WIRE_FORMAT, WireFormat.PROTO_SINGLE)
                 .with(MilvusConnectorConfig.TIMETICK_STALL_TIMEOUT_MS, 5_000L)
+                .build();
+    }
+
+    private Configuration autoDetectConfig() {
+        return connectorConfig().edit()
+                .with(MilvusConnectorConfig.WIRE_FORMAT, WireFormat.AUTO)
                 .build();
     }
 
@@ -369,6 +377,83 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         Struct deleteBefore = deleteValue.getStruct("before");
         assertThat(deleteBefore).isNotNull();
         assertThat(deleteBefore.get("id")).isEqualTo(entityId);
+    }
+
+    @Test
+    void shouldAutoDetectWireFormat() throws Exception {
+        LogInterceptor factoryLogs = new LogInterceptor(MilvusChangeEventSourceFactory.class);
+        LogInterceptor detectorLogs = new LogInterceptor(MilvusWireFormatDetector.class);
+
+        createSimpleCollection(collectionName);
+        start(MilvusConnector.class, autoDetectConfig());
+        waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
+        waitForConsumerPositionResolved();
+
+        long entityId = System.nanoTime();
+        milvusClient.insert(InsertReq.builder()
+                .collectionName(collectionName)
+                .data(Collections.singletonList(rowWithIdAndTitle(entityId, "auto")))
+                .build());
+
+        String expectedTopic = TestHelper.TOPIC_PREFIX + "." + MilvusConnectorConfig.MILVUS_DATABASE.defaultValueAsString()
+                + "." + collectionName;
+        var records = consumeRecordsByTopic(1);
+        List<SourceRecord> topicRecords = records.recordsForTopic(expectedTopic);
+        assertThat(topicRecords).as("Expected insert on topic " + expectedTopic).hasSize(1);
+
+        Struct value = (Struct) topicRecords.get(0).value();
+        assertThat(value.getString("op")).isEqualTo("c");
+        assertThat(value.getStruct("after").get("id")).isEqualTo(entityId);
+        assertThat(value.getStruct("source").getString("collection")).isEqualTo(collectionName);
+
+        assertThat(factoryLogs.containsMessage("starting from the earliest available message")).isTrue();
+        assertThat(factoryLogs.containsMessage("Detected Milvus wire format 'proto_single'")).isTrue();
+        assertThat(factoryLogs.containsMessage("Using explicitly configured Milvus wire format")).isFalse();
+        assertThat(detectorLogs.containsMessage("defaulting wire format to")).isFalse();
+    }
+
+    @Test
+    void shouldAutoDetectWireFormatOnRestart() throws Exception {
+        LogInterceptor factoryLogs = new LogInterceptor(MilvusChangeEventSourceFactory.class);
+        LogInterceptor detectorLogs = new LogInterceptor(MilvusWireFormatDetector.class);
+
+        createSimpleCollection(collectionName);
+        start(MilvusConnector.class, autoDetectConfig());
+        waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
+        waitForConsumerPositionResolved();
+
+        String expectedTopic = TestHelper.TOPIC_PREFIX + "." + MilvusConnectorConfig.MILVUS_DATABASE.defaultValueAsString()
+                + "." + collectionName;
+
+        long firstId = System.nanoTime();
+        milvusClient.insert(InsertReq.builder()
+                .collectionName(collectionName)
+                .data(Collections.singletonList(rowWithIdAndTitle(firstId, "before-restart")))
+                .build());
+        List<SourceRecord> firstRecords = consumeRecordsByTopic(1).recordsForTopic(expectedTopic);
+        assertThat(firstRecords).hasSize(1);
+        assertThat(((Struct) firstRecords.get(0).value()).getStruct("after").get("id")).isEqualTo(firstId);
+
+        stopConnector();
+        factoryLogs.clear();
+        detectorLogs.clear();
+
+        start(MilvusConnector.class, autoDetectConfig());
+        waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
+        waitForConsumerPositionResolved();
+
+        long secondId = firstId + 1;
+        milvusClient.insert(InsertReq.builder()
+                .collectionName(collectionName)
+                .data(Collections.singletonList(rowWithIdAndTitle(secondId, "after-restart")))
+                .build());
+        List<SourceRecord> secondRecords = consumeRecordsByTopic(1).recordsForTopic(expectedTopic);
+        assertThat(secondRecords).as("Expected the post-restart insert on topic " + expectedTopic).hasSize(1);
+        assertThat(((Struct) secondRecords.get(0).value()).getStruct("after").get("id")).isEqualTo(secondId);
+
+        assertThat(factoryLogs.containsMessage("starting from stored offsets")).isTrue();
+        assertThat(factoryLogs.containsMessage("Detected Milvus wire format 'proto_single'")).isTrue();
+        assertThat(detectorLogs.containsMessage("defaulting wire format to")).isFalse();
     }
 
     @Test
