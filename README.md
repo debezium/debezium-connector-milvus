@@ -1,10 +1,10 @@
-![License](http://img.shields.io/:license-apache%202.0-brightgreen.svg)
-![Maven Central](https://img.shields.io/maven-central/v/io.debezium/debezium-connector-milvus)
-![Build Status](https://img.shields.io/github/actions/workflow/status/debezium/debezium-connector-milvus/maven.yml?branch=main&logo=github&label=Maven%20CI)
-![User chat](https://img.shields.io/badge/chat-users-brightgreen.svg)
-![Developer chat](https://img.shields.io/badge/chat-devs-brightgreen.svg)
-![Google Group](https://img.shields.io/:mailing%20list-debezium-brightgreen.svg)
-![Stack Overflow](http://img.shields.io/:stack%20overflow-debezium-brightgreen.svg)
+[![License](http://img.shields.io/:license-apache%202.0-brightgreen.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
+[![Maven Central](https://img.shields.io/maven-central/v/io.debezium/debezium-connector-milvus)](https://search.maven.org/#search|ga|1|g:io.debezium+a:debezium-connector-milvus)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/debezium/debezium-connector-milvus/maven.yml?branch=main&logo=github&label=Maven%20CI)](https://github.com/debezium/debezium-connector-milvus/actions/workflows/maven.yml?query=branch:main)
+[![User chat](https://img.shields.io/badge/chat-users-brightgreen.svg)](https://debezium.zulipchat.com/#narrow/stream/302529-users)
+[![Developer chat](https://img.shields.io/badge/chat-devs-brightgreen.svg)](https://debezium.zulipchat.com/#narrow/stream/302533-dev)
+[![Google Group](https://img.shields.io/:mailing%20list-debezium-brightgreen.svg)](https://groups.google.com/forum/#!forum/debezium)
+[![Stack Overflow](http://img.shields.io/:stack%20overflow-debezium-brightgreen.svg)](http://stackoverflow.com/questions/tagged/debezium)
 
 Copyright Debezium Authors.
 Licensed under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
@@ -29,8 +29,6 @@ E.g. the format of emitted messages may change, specific features may not be imp
 - Supports interval-based heartbeats, Debezium notifications, and AVRO/JSON Connect converters.
 - Exposes snapshot and streaming metrics over JMX, including Milvus-specific TSO watermark lag.
 
-
-
 ## How the connector works
 
 Milvus does not expose a change stream over its gRPC API. Instead, Milvus publishes every write to an internal message queue (MQ) channel before it persists the write, and the connector reads that channel directly. Reading changes therefore requires access to three Milvus components:
@@ -48,8 +46,6 @@ While streaming, the connector deserializes each raw MQ message and buffers it i
 - Milvus 2.5 or later, deployed with **Kafka as the MQ backend** (`mq.type: kafka` in the Milvus configuration). Deployments backed by Pulsar or RocksMQ are not supported.
 - Network access from the connector to the Milvus gRPC endpoint, to the Kafka cluster Milvus uses as its MQ, and to the etcd cluster backing Milvus.
 - Java 17 or later.
-
-
 
 ## Example configuration
 
@@ -80,8 +76,6 @@ The connector supports a single task; `tasks.max` values greater than `1` are ig
 - The connector emits no update (`op=u`) events. Milvus implements an upsert as a delete followed by an insert, and the connector emits that pair.
 - Delete events carry a primary-key-only `before` image, because Milvus does not publish the prior state of a deleted entity.
 - Collection DDL (create/drop) is tracked internally for ordering but is not emitted as schema change events.
-
-
 
 ## Building and testing the Milvus connector
 
@@ -150,8 +144,6 @@ When you are finished running the integration tests from your IDE, you have to s
 $ mvn docker:stop
 ```
 
-
-
 ### Analyzing the database
 
 Sometimes you may want to inspect the state of Milvus after one or more integration tests are run. The `mvn install` command runs the tests but shuts down and removes the containers after the integration tests complete. To keep them running after the integration tests complete, use this Maven command:
@@ -166,8 +158,6 @@ This instructs Maven to run the normal Maven lifecycle through `integration-test
 $ mvn docker:stop
 ```
 
-
-
 ### Skipping the containers entirely
 
 If you only want to run the unit tests, or you are running against a Milvus cluster you manage yourself, you can disable the container lifecycle:
@@ -175,8 +165,6 @@ If you only want to run the unit tests, or you are running against a Milvus clus
 ```
 $ mvn install -Ddocker.skip=true -DskipITs
 ```
-
-
 
 ## Contributing
 
