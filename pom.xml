@@ -47,6 +47,16 @@
         <!-- Integration test properties -->
         <docker.skip>false</docker.skip>
         <kafka.init.timeout>120000</kafka.init.timeout>
+
+        <!-- Integration test images -->
+        <etcd.image>quay.io/coreos/etcd</etcd.image>
+        <version.etcd.server>v3.5.18</version.etcd.server>
+        <minio.image>milvusdb/minio</minio.image>
+        <version.minio.server>RELEASE.2024-12-18T13-15-44Z</version.minio.server>
+        <kafka.image>apache/kafka</kafka.image>
+        <version.kafka.server>3.8.1</version.kafka.server>
+        <milvus.image>milvusdb/milvus</milvus.image>
+        <version.milvus.server>v2.5.4</version.milvus.server>
     </properties>
 
     <repositories>
@@ -430,7 +440,7 @@
                     <images>
 
                         <image>
-                            <name>quay.io/coreos/etcd:v3.5.18</name>
+                            <name>${etcd.image}:${version.etcd.server}</name>
                             <alias>etcd</alias>
                             <run>
                                 <network>
@@ -456,7 +466,7 @@
                         </image>
 
                         <image>
-                            <name>quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z</name>
+                            <name>${minio.image}:${version.minio.server}</name>
                             <alias>minio</alias>
                             <run>
                                 <network>
@@ -484,7 +494,7 @@
                         </image>
 
                         <image>
-                            <name>apache/kafka:3.8.1</name>
+                            <name>${kafka.image}:${version.kafka.server}</name>
                             <alias>kafka</alias>
                             <run>
                                 <network>
@@ -516,7 +526,7 @@
                             </run>
                         </image>
                         <image>
-                            <name>milvusdb/milvus:v2.5.4</name>
+                            <name>${milvus.image}:${version.milvus.server}</name>
                             <alias>milvus</alias>
                             <run>
                                 <network>
